@@ -1,22 +1,22 @@
-# POS: Phase 0 plan (proposed)
+# POS: plan
 
-Status: **awaiting approval.** No application code has been written yet. The proposed data model is in [`prisma/schema.prisma`](../prisma/schema.prisma). It passes `prisma validate` on Prisma 7.10, and the generated SQL applies cleanly to PostgreSQL 16 (55 tables).
+Status: **approved 2026-10-12. Phase 0 is done.** The data model is in [`prisma/schema.prisma`](../prisma/schema.prisma).
 
 ---
 
 ## 1. Stack (pinned at scaffold time)
 
-| Concern | Choice | Note |
-|---|---|---|
-| Framework | Next.js 16 (App Router), React 19, TypeScript `strict` | pnpm |
-| UI | Tailwind CSS 4, shadcn/ui, next-themes (dark mode), lucide icons | |
-| DB | PostgreSQL 16 locally, Neon in prod; Prisma **7.10** (`prisma-client` generator, `@prisma/adapter-pg`, or `adapter-neon` on Vercel) | npm's `prisma@latest` currently points at an 8.0 RC, so 7.10 is pinned explicitly |
-| Auth | Auth.js v5 (`next-auth@5.0.0-beta.32`), Credentials provider, JWT sessions | v5 never left the beta tag. The auth surface is isolated in `src/server/auth/` so it can be swapped later |
-| Validation | Zod 4 on every server action and route handler | |
-| i18n | next-intl 4, cookie/user-based locale (no URL prefix), `mn` default, `en` | |
-| Tests | Vitest (unit + DB integration), Playwright (e2e) | |
-| PWA | Serwist (service worker), Dexie (IndexedDB) | |
-| Hosting | Vercel + Neon, `.env.example` | |
+| Concern    | Choice                                                                                                                              | Note                                                                                                      |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Framework  | Next.js 16 (App Router), React 19, TypeScript `strict`                                                                              | pnpm                                                                                                      |
+| UI         | Tailwind CSS 4, shadcn/ui, next-themes (dark mode), lucide icons                                                                    |                                                                                                           |
+| DB         | PostgreSQL 16 locally, Neon in prod; Prisma **7.10** (`prisma-client` generator, `@prisma/adapter-pg`, or `adapter-neon` on Vercel) | npm's `prisma@latest` currently points at an 8.0 RC, so 7.10 is pinned explicitly                         |
+| Auth       | Auth.js v5 (`next-auth@5.0.0-beta.32`), Credentials provider, JWT sessions                                                          | v5 never left the beta tag. The auth surface is isolated in `src/server/auth/` so it can be swapped later |
+| Validation | Zod 4 on every server action and route handler                                                                                      |                                                                                                           |
+| i18n       | next-intl 4, cookie/user-based locale (no URL prefix), `mn` default, `en`                                                           |                                                                                                           |
+| Tests      | Vitest (unit + DB integration), Playwright (e2e)                                                                                    |                                                                                                           |
+| PWA        | Serwist (service worker), Dexie (IndexedDB)                                                                                         |                                                                                                           |
+| Hosting    | Vercel + Neon, `.env.example`                                                                                                       |                                                                                                           |
 
 ## 2. Architecture
 
@@ -58,6 +58,7 @@ tests/e2e/
 ## 3. Correctness design (the non-negotiables)
 
 **Money.** `bigint` MNT minor units (möngö, 1₮ = 100) in the DB (`BigInt`) and in all domain code, so floats can't creep in. One `domain/money.ts`:
+
 - `mulRound(amount, num, den, mode)`: exact integer rational math, rounding half away from zero.
 - Inclusive tax: `vat = round(gross × vatBps / (10000 + vatBps + cityBps))`, `net = gross − vat − city`.
 - Exclusive tax: `vat = round(net × vatBps / 10000)`, `gross = net + vat + city`.
@@ -75,8 +76,9 @@ tests/e2e/
 **Stock.** `StockMovement` is the append-only source of truth. `StockLevel.onHandMilli` is a cache that `services/stock.ts` updates in the same transaction. That service locks the affected rows with `SELECT … FOR UPDATE`, in a fixed order so concurrent checkouts can't deadlock. A `stock:verify` script and an integration test check `Σ movements == StockLevel` and can rebuild the cache. Average cost is updated on receiving, and each sale line snapshots its COGS.
 
 **Checkout transaction.**
+
 1. The client builds the cart with the same `domain/` code, so totals are instant and updates are optimistic.
-2. On *Charge*, the client sends the sale UUIDv7, which it generated when the cart opened, plus line intents (variant, qty, requested overrides and discounts with approval tokens) and tenders.
+2. On _Charge_, the client sends the sale UUIDv7, which it generated when the cart opened, plus line intents (variant, qty, requested overrides and discounts with approval tokens) and tenders.
 3. Inside one DB transaction the server:
    - returns the existing sale if this ID was already committed (idempotent replay);
    - reloads prices, tax classes and promotions from the DB and **recomputes everything**;
@@ -84,7 +86,7 @@ tests/e2e/
 4. A concurrent duplicate request hits the primary-key conflict and is answered with the existing sale.
 5. Fiscal receipt and SMS/email go out after commit, as retryable records (`FiscalReceipt`, `ReceiptDelivery`).
 
-**QPay** is a `PaymentProvider` interface (`createInvoice`, `checkPayment`, `refund`) with a mock implementation. A `PaymentIntent` tracks the invoice. The webhook only *triggers* a server-side status check and is never trusted by itself. Checkout accepts only intents the server has verified as `PAID`.
+**QPay** is a `PaymentProvider` interface (`createInvoice`, `checkPayment`, `refund`) with a mock implementation. A `PaymentIntent` tracks the invoice. The webhook only _triggers_ a server-side status check and is never trusted by itself. Checkout accepts only intents the server has verified as `PAID`.
 
 **eBarimt** is a `FiscalProvider` interface (`issue(sale)`, `issueReturn(refund)`, `status(id)`) with a mock. Nothing about the real PosAPI is guessed; the open points are marked `TODO(ebarimt)` (branch config, item classification codes, payload mapping).
 
@@ -97,21 +99,21 @@ tests/e2e/
 
 ## 5. Data model overview
 
-| Area | Models |
-|---|---|
-| Setup | `BusinessSettings` (singleton), `Location`, `Register` (`openShiftId` pointer enforces one open shift), `Device` |
-| Access | `User` (role, password, PIN lookup, tokenVersion), `UserLocation` |
-| Catalog | `TaxClass` (VAT bps, city-tax bps, treatment), `Category` (tree), `Product`, `ProductOption`, `ProductVariant` (SKU, price, avg cost), `Barcode` (many per variant), `QuickKey` |
-| Restaurant | `ModifierGroup`, `Modifier`, `ProductModifierGroup`, `DiningTable`, `OpenTicket` (also retail hold/resume), `KitchenTicket` |
-| Purchasing | `Supplier`, `SupplierItem`, `PurchaseOrder`(+`Line`), `GoodsReceipt`(+`Line`) |
-| Inventory | `StockMovement` (ledger), `StockLevel` (cache + reorder point/qty), `StockAdjustment`, `Stocktake`(+`Line`) |
-| Sales | `Sale` (client UUID, receipt no., share token), `SaleLine` (full price/tax/cost snapshot), `SaleLineModifier`, `SaleDiscount`, `SalePayment`, `PaymentIntent`, `SaleVoid` |
-| Returns | `Refund` (incl. exchange link), `RefundLine` (restock flag), `RefundPayment` (link to original tender) |
-| Shifts | `Shift` (float, expected/counted/variance, denominations), `CashMovement`, `ZReport` (frozen snapshot) |
-| Customers | `Customer`, `LoyaltyEntry`, `StoreCreditEntry`, `GiftCard` (HMAC code hash + last4), `GiftCardEntry` |
-| Promotions | `Discount` (automatic or code; % or fixed; order or products/categories), `DiscountProduct`, `DiscountCategory` |
-| Integrations | `FiscalReceipt`, `ReceiptDelivery` |
-| Infra | `Sequence` (gap-free numbering), `AuditLog` |
+| Area         | Models                                                                                                                                                                          |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Setup        | `BusinessSettings` (singleton), `Location`, `Register` (`openShiftId` pointer enforces one open shift), `Device`                                                                |
+| Access       | `User` (role, password, PIN lookup, tokenVersion), `UserLocation`                                                                                                               |
+| Catalog      | `TaxClass` (VAT bps, city-tax bps, treatment), `Category` (tree), `Product`, `ProductOption`, `ProductVariant` (SKU, price, avg cost), `Barcode` (many per variant), `QuickKey` |
+| Restaurant   | `ModifierGroup`, `Modifier`, `ProductModifierGroup`, `DiningTable`, `OpenTicket` (also retail hold/resume), `KitchenTicket`                                                     |
+| Purchasing   | `Supplier`, `SupplierItem`, `PurchaseOrder`(+`Line`), `GoodsReceipt`(+`Line`)                                                                                                   |
+| Inventory    | `StockMovement` (ledger), `StockLevel` (cache + reorder point/qty), `StockAdjustment`, `Stocktake`(+`Line`)                                                                     |
+| Sales        | `Sale` (client UUID, receipt no., share token), `SaleLine` (full price/tax/cost snapshot), `SaleLineModifier`, `SaleDiscount`, `SalePayment`, `PaymentIntent`, `SaleVoid`       |
+| Returns      | `Refund` (incl. exchange link), `RefundLine` (restock flag), `RefundPayment` (link to original tender)                                                                          |
+| Shifts       | `Shift` (float, expected/counted/variance, denominations), `CashMovement`, `ZReport` (frozen snapshot)                                                                          |
+| Customers    | `Customer`, `LoyaltyEntry`, `StoreCreditEntry`, `GiftCard` (HMAC code hash + last4), `GiftCardEntry`                                                                            |
+| Promotions   | `Discount` (automatic or code; % or fixed; order or products/categories), `DiscountProduct`, `DiscountCategory`                                                                 |
+| Integrations | `FiscalReceipt`, `ReceiptDelivery`                                                                                                                                              |
+| Infra        | `Sequence` (gap-free numbering), `AuditLog`                                                                                                                                     |
 
 Indexes for speed: `Barcode.code` and `ProductVariant.sku` are unique btree (a scan is one index hit). `Product.name` and `Customer.name` have trigram GIN indexes (`pg_trgm`) for search-as-you-type `ILIKE`. `Customer.phone` is unique. Reports use `(locationId, occurredAt)` and `(cashierId, occurredAt)`.
 
@@ -119,30 +121,28 @@ Indexes for speed: `Barcode.code` and `ProductVariant.sku` are unique btree (a s
 
 Each phase is finished only when all of these pass: `pnpm typecheck`, `pnpm lint`, `pnpm test` (unit and DB integration), `pnpm test:e2e`, `pnpm build`. The migration must apply to a fresh DB, `pnpm db:seed` must run, and the app must boot. Every phase ends in its own commit with a note on what was built, what's mocked and what's next.
 
-| # | Scope |
-|---|---|
-| **0** | Scaffold (Next 16, TS strict, Tailwind 4, shadcn, ESLint/Prettier). Prisma 7 with the initial migration, including the append-only triggers. Auth.js: password login, device pairing, PIN switch. Roles, permissions and the action wrapper. next-intl `mn`/`en`, plus a test that both message files have the same keys. Theme and dark mode. Admin and POS shells with empty, loading and error states. `domain/money.ts` and `qty.ts` with tests. Seed data: business, 1 location, 2 registers, owner/manager/cashier, tax classes, Mongolian-named categories and about 40 products with variants, barcodes and opening stock. GitHub Actions CI. Login smoke e2e test. |
-| **1** | Catalog CRUD (products, variants/options, barcodes, categories, tax classes, images via storage adapter). CSV import and export. Stock service and ledger. Adjustments with reasons. Suppliers, POs, receiving (average cost). Stocktake. Low-stock list. Tests cover stock math, concurrency, cache-equals-ledger and CSV. |
-| **2** | Checkout UI: quick-key grid, `/` search, USB-wedge scanner and camera fallback (BarcodeDetector, then ZXing), cart (qty, override, line and cart discounts, notes), hold/resume. Tax, discount and tender domain code with tests. Checkout service (transactional, idempotent). Cash, card, bank, QPay mock and split tender. Receipts: 80 mm print CSS, PDF, share link. eBarimt mock. SMS/email mock. Playwright checkout happy path. *(A minimal "open shift with float" lands here, because a sale needs a shift.)* |
-| **3** | Shifts: open and close, cash in and out, expected vs counted by denomination, X- and Z-reports. Voids. Returns, refunds and exchanges against the original sale, with restock option, reason codes, manager approval and refund to the original method. |
-| **4** | Customers (profiles, checkout lookup, history). Automatic promotions and coupon codes. Loyalty earn and redeem. Store credit. Gift cards (sell, redeem, balance check). Tips. |
-| **5** | Reports: day, week and month; by product, category, staff and payment method; gross margin; top sellers; dead stock; tax report; end-of-day summary; CSV export. Audit-log viewer. Admin screens for users and roles, locations, registers and devices, tax settings and receipt template. |
-| **5b** | Restaurant mode behind the per-location flag: tables and tabs, modifier picker, kitchen tickets. *(See question 4.)* |
-| **6** | Offline PWA and sync queue. Hardening: rate limits on login, PIN and gift-card lookup; CSP and security headers; idempotency and concurrency tests; notes on Neon backups and point-in-time recovery. |
-| **7** | Docs: README, architecture, setup, deploy (Vercel + Neon), adapter and API interfaces. |
+| #      | Scope                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **0**  | Scaffold (Next 16, TS strict, Tailwind 4, shadcn, ESLint/Prettier). Prisma 7 with the initial migration, including the append-only triggers. Auth.js: password login, device pairing, PIN switch. Roles, permissions and the action wrapper. next-intl `mn`/`en`, plus a test that both message files have the same keys. Theme and dark mode. Admin and POS shells with empty, loading and error states. `domain/money.ts` and `qty.ts` with tests. Seed data: business, 1 location, 2 registers, owner/manager/cashier, tax classes, Mongolian-named categories and about 40 products with variants, barcodes and opening stock. GitHub Actions CI. Login smoke e2e test. |
+| **1**  | Catalog CRUD (products, variants/options, barcodes, categories, tax classes, images via storage adapter). CSV import and export. Stock service and ledger. Adjustments with reasons. Suppliers, POs, receiving (average cost). Stocktake. Low-stock list. Tests cover stock math, concurrency, cache-equals-ledger and CSV.                                                                                                                                                                                                                                                                                                                                                 |
+| **2**  | Checkout UI: quick-key grid, `/` search, USB-wedge scanner and camera fallback (BarcodeDetector, then ZXing), cart (qty, override, line and cart discounts, notes), hold/resume. Tax, discount and tender domain code with tests. Checkout service (transactional, idempotent). Cash, card, bank, QPay mock and split tender. Receipts: 80 mm print CSS, PDF, share link. eBarimt mock. SMS/email mock. Playwright checkout happy path. _(A minimal "open shift with float" lands here, because a sale needs a shift.)_                                                                                                                                                     |
+| **3**  | Shifts: open and close, cash in and out, expected vs counted by denomination, X- and Z-reports. Voids. Returns, refunds and exchanges against the original sale, with restock option, reason codes, manager approval and refund to the original method.                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **4**  | Customers (profiles, checkout lookup, history). Automatic promotions and coupon codes. Loyalty earn and redeem. Store credit. Gift cards (sell, redeem, balance check). Tips.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **5**  | Reports: day, week and month; by product, category, staff and payment method; gross margin; top sellers; dead stock; tax report; end-of-day summary; CSV export. Audit-log viewer. Admin screens for users and roles, locations, registers and devices, tax settings and receipt template.                                                                                                                                                                                                                                                                                                                                                                                  |
+| **5b** | Restaurant mode behind the per-location flag: tables and tabs, modifier picker, kitchen tickets. _(See question 4.)_                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| **6**  | Offline PWA and sync queue. Hardening: rate limits on login, PIN and gift-card lookup; CSP and security headers; idempotency and concurrency tests; notes on Neon backups and point-in-time recovery.                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| **7**  | Docs: README, architecture, setup, deploy (Vercel + Neon), adapter and API interfaces.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 Development and tests run against local PostgreSQL 16 in this environment, and against a Postgres service container in CI. I'll need a Neon `DATABASE_URL` only when you want a deployed preview.
 
-## 7. Questions (one batch; replying "go" accepts every default)
+## 7. Decisions (confirmed)
 
-1. **Tenancy.** Is it one business per deployment, with many locations? **Default: yes.** The schema has no tenant ID. A multi-tenant SaaS would add an organisation ID to every table plus row-level scoping, and that is far cheaper to decide now.
-2. **Weighed goods.** Do you sell by kg or L, or scan scale-printed barcodes? **Default: yes, supported** (quantities in thousandths). If not, I'll simplify quantities to whole units.
-3. **Layaway / special orders** appear in "best ideas" but not in the core features or phases. **Default: out of scope for now.** The schema can add them later without breaking anything.
-4. **Restaurant extras** have no phase. **Default: Phase 5b**, after reports and before offline, so the offline checkout handles modifiers from day one. The schema already includes them.
-
-Decisions I've taken. Speak up if you disagree:
-- **Auth.js v5, still beta, pinned.** Clerk is the other option, but it is weaker for PIN switching on shared terminals and for offline use.
-- **Selling into negative stock is allowed, with a warning.** This is a setting.
-- **Loyalty redemption is a discount**, so it reduces the VAT base. **Gift cards and store credit are tenders.**
-- **Sale totals are rounded to whole ₮.** The rounding unit is configurable.
-- **City tax (НХАТ) is supported**, as a per-tax-class rate that defaults to 0%.
+1. **Tenancy:** one business per deployment, with many locations. There is no tenant ID.
+2. **Weighed goods are a primary use case.** Quantities are integer thousandths. Variants carry a scale PLU code. Scale-label barcodes are parsed by configurable rules (`BusinessSettings.scaleBarcodeRules`, `src/domain/scale-barcode.ts`). Exact barcode matches always win.
+3. **Layaway and special orders are out of scope for now.** The product comes first.
+4. **Restaurant extras are Phase 5b**, before offline, so the offline checkout handles modifiers from day one.
+5. **Auth:** Auth.js v5, with JWT sessions re-validated against the database on every request. Pinned at `5.0.0-beta.32`.
+6. **Selling into negative stock is allowed, with a warning.** This is a setting.
+7. **Loyalty redemption is a discount**, so it reduces the VAT base. **Gift cards and store credit are tenders.**
+8. **Sale totals round to whole ₮.** The unit is configurable. **City tax (НХАТ)** is a per-tax-class rate that defaults to 0%.
+9. **Next.js `cacheComponents` is off.** Every POS screen is per-user and dynamic, and the checkout runs client-side.

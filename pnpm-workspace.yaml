@@ -1,0 +1,9 @@
+onlyBuiltDependencies:
+  - "@parcel/watcher"
+  - "@prisma/engines"
+  - "@swc/core"
+  - esbuild
+  - prisma
+ignoredBuiltDependencies:
+  - sharp
+  - unrs-resolver

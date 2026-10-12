@@ -1,0 +1,30 @@
+import { describe, expect, it } from "vitest";
+import { isLocked, LOCKOUT_POLICY, lockUntilAfterFailure } from "./lockout";
+
+const now = new Date("2026-01-01T00:00:00Z");
+const minutes = (date: Date | null) => (date ? (date.getTime() - now.getTime()) / 60_000 : null);
+
+describe("lockUntilAfterFailure", () => {
+  it("allows the free attempts without locking", () => {
+    for (let failures = 1; failures <= LOCKOUT_POLICY.freeAttempts; failures++) {
+      expect(lockUntilAfterFailure(failures, now)).toBeNull();
+    }
+  });
+
+  it("doubles the lock window per further failure, capped at 15 minutes", () => {
+    expect(minutes(lockUntilAfterFailure(5, now))).toBe(1);
+    expect(minutes(lockUntilAfterFailure(6, now))).toBe(2);
+    expect(minutes(lockUntilAfterFailure(7, now))).toBe(4);
+    expect(minutes(lockUntilAfterFailure(8, now))).toBe(8);
+    expect(minutes(lockUntilAfterFailure(9, now))).toBe(15);
+    expect(minutes(lockUntilAfterFailure(50, now))).toBe(15);
+  });
+});
+
+describe("isLocked", () => {
+  it("is locked only strictly before the expiry", () => {
+    expect(isLocked(null, now)).toBe(false);
+    expect(isLocked(new Date(now.getTime() + 1), now)).toBe(true);
+    expect(isLocked(now, now)).toBe(false);
+  });
+});

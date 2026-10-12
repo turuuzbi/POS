@@ -1,5 +1,5 @@
 // =============================================================================
-// POS — Prisma schema (PROPOSED, Phase 0 — awaiting approval)
+// POS — Prisma schema
 // =============================================================================
 //
 // Conventions
@@ -246,6 +246,10 @@ model BusinessSettings {
   totalRoundingUnit  BigInt  @default(100)
   allowNegativeStock Boolean @default(true) /// sell-through with a warning instead of blocking the till
 
+  /// Scale (weight/price-embedded) barcode rules, validated by
+  /// src/domain/scale-barcode.ts. null = built-in default rules.
+  scaleBarcodeRules Json?
+
   tipsEnabled   Boolean @default(false)
   tipPresetsBps Int[]   @default([500, 1000, 1500])
 
@@ -328,6 +332,9 @@ model Device {
   pairedAt   DateTime  @default(now())
   lastSeenAt DateTime?
   revokedAt  DateTime?
+  /// PIN brute-force protection, per device (a PIN alone identifies a user).
+  failedPinAttempts Int       @default(0)
+  pinLockedUntil    DateTime?
 
   location Location  @relation(fields: [locationId], references: [id])
   register Register? @relation(fields: [registerId], references: [id])
@@ -485,6 +492,9 @@ model ProductVariant {
   id        String   @id @default(uuid(7)) @db.Uuid
   productId String   @db.Uuid
   sku       String?  @unique
+  /// Scale item code (PLU) embedded in weight/price barcodes; stored without
+  /// leading zeros. Lets one scale label resolve to this variant.
+  pluCode   String?  @unique
   name      String? /// e.g. "M / Black"; null for single-variant products
   option1   String?
   option2   String?
