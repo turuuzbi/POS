@@ -2,6 +2,7 @@
 
 import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
+import { useRef } from "react";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -35,6 +36,9 @@ export function RevokeDeviceButton({
   const t = useTranslations("common");
   const router = useRouter();
   const { run, pending } = useAction(revokeDevice);
+  // Only a confirmed revoke removes the trigger; Cancel/Escape keep Radix's
+  // default of returning focus to it.
+  const confirmed = useRef(false);
 
   return (
     <AlertDialog>
@@ -43,6 +47,8 @@ export function RevokeDeviceButton({
       </AlertDialogTrigger>
       <AlertDialogContent
         onCloseAutoFocus={(event) => {
+          if (!confirmed.current) return;
+          confirmed.current = false;
           // The trigger is about to be removed by the refresh: keep focus on the list.
           event.preventDefault();
           document.getElementById(DEVICE_LIST_HEADING_ID)?.focus();
@@ -57,7 +63,8 @@ export function RevokeDeviceButton({
           <AlertDialogAction
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             disabled={pending}
-            onClick={() =>
+            onClick={() => {
+              confirmed.current = true;
               run(
                 { deviceId },
                 {
@@ -67,8 +74,8 @@ export function RevokeDeviceButton({
                     router.refresh();
                   },
                 },
-              )
-            }
+              );
+            }}
           >
             {label}
           </AlertDialogAction>

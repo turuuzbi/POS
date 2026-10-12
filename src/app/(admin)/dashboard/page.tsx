@@ -42,7 +42,7 @@ export default async function DashboardPage() {
           <li key={href}>
             <Link
               href={href}
-              className="group block rounded-xl focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+              className="group block rounded-xl focus-visible:ring-[3px] focus-visible:ring-ring focus-visible:outline-none"
             >
               <Card className="h-full transition-colors group-hover:bg-accent/50">
                 <CardHeader className="grid-cols-[auto_1fr_auto] items-center gap-4">

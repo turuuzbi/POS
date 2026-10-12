@@ -82,12 +82,14 @@ async function seedStaff(locationId: string) {
   const passwordHash = await hashPassword(DEV_PASSWORD);
   for (const member of STAFF) {
     const lookup = pinLookup(member.pin);
-    // Stable key: email, or name+role for PIN-only staff (not the PIN hash,
-    // which changes with PIN_PEPPER and would create duplicates).
+    // Email for staff who have one; PIN-only staff match by name+role (stable
+    // across PIN_PEPPER changes) or by PIN (stable across renames).
     const existing = await db.user.findFirst({
       where: member.email
         ? { email: member.email }
-        : { name: member.name, role: member.role, email: null },
+        : {
+            OR: [{ name: member.name, role: member.role, email: null }, { pinLookup: lookup }],
+          },
     });
     if (existing) continue;
     await db.user.create({

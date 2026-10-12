@@ -147,3 +147,29 @@ describe("CHECK constraints", () => {
     ).rejects.toThrow(/SalePayment_amounts_valid/);
   });
 });
+
+describe("one open shift per register", () => {
+  beforeEach(resetDatabase);
+
+  it("allows many closed shifts but only one OPEN shift per register", async () => {
+    const { location, register } = await createLocation();
+    const cashier = await createUser({ role: "CASHIER" });
+    const base = {
+      registerId: register.id,
+      locationId: location.id,
+      openedById: cashier.id,
+      openingFloat: 0n,
+    };
+    await db.shift.create({ data: { ...base, status: "CLOSED", closedAt: new Date() } });
+    await db.shift.create({ data: { ...base, status: "CLOSED", closedAt: new Date() } });
+    const open = await db.shift.create({ data: { ...base, status: "OPEN" } });
+    await expect(db.shift.create({ data: { ...base, status: "OPEN" } })).rejects.toThrow(
+      /Shift_one_open_per_register|Unique constraint/,
+    );
+    // The generated unique lookup always carries the status, so it finds the open shift.
+    const found = await db.shift.findUnique({
+      where: { registerId_status: { registerId: register.id, status: "OPEN" } },
+    });
+    expect(found?.id).toBe(open.id);
+  });
+});

@@ -2,16 +2,14 @@ import { redirect } from "next/navigation";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
-import { hasPermission, type Permission } from "@/domain/permissions";
 import type { CurrentUser } from "../auth/session";
 
 const currentUser = vi.hoisted(() => ({ value: null as CurrentUser | null }));
 
-vi.mock("../auth/session", () => ({
+// Only the session lookup is faked; authorisation runs the real code.
+vi.mock("../auth/session", async () => ({
+  ...(await import("@/domain/access")),
   getCurrentUser: async () => currentUser.value,
-  can: (user: CurrentUser, permission: Permission, locationId?: string) =>
-    hasPermission(user.role, permission) &&
-    (!locationId || user.locationIds === "ALL" || user.locationIds.includes(locationId)),
 }));
 vi.mock("../request", () => ({
   requestMeta: async () => ({ ip: "203.0.113.1", userAgent: "test" }),

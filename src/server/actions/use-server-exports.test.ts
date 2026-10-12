@@ -33,11 +33,15 @@ interface Analysis {
   moduleLevel: boolean;
   inlineCount: number;
   exports: string[];
+  parseErrors: number;
 }
 
 function analyse(path: string): Analysis {
   const text = readFileSync(path, "utf8");
-  const file = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  // Let TypeScript infer TS/TSX/JS from the extension: parsing .ts as TSX
+  // would turn generics like <T>(x) => x into JSX and hide what follows.
+  const file = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
+  const diagnostics = (file as unknown as { parseDiagnostics: ts.Diagnostic[] }).parseDiagnostics;
   let inlineCount = 0;
   const visit = (node: ts.Node) => {
     if (
@@ -79,6 +83,7 @@ function analyse(path: string): Analysis {
     moduleLevel: hasUseServer(file.statements),
     inlineCount,
     exports,
+    parseErrors: diagnostics.length,
   };
 }
 
@@ -86,6 +91,10 @@ const analyses = sourceFiles(SRC).map(analyse);
 
 describe("server actions", () => {
   const serverModules = analyses.filter((a) => a.moduleLevel);
+
+  it("can parse every source file (a misparse would hide directives)", () => {
+    for (const { path, parseErrors } of analyses) expect(parseErrors, path).toBe(0);
+  });
 
   it("exist only under src/server/actions", () => {
     expect(serverModules.length).toBeGreaterThan(0);

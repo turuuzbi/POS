@@ -32,6 +32,7 @@ export function PairDeviceForm({ locations }: { locations: LocationOption[] }) {
       className="flex flex-col gap-4"
       onSubmit={(event) => {
         event.preventDefault();
+        if (pending) return;
         run(
           { name, locationId, registerId: registerId || null },
           {
@@ -94,11 +95,17 @@ export function PairDeviceForm({ locations }: { locations: LocationOption[] }) {
         </div>
       </div>
       {errorMessage ? (
-        <p role="alert" className="text-sm text-destructive">
+        <p id="pair-device-error" role="alert" className="text-sm text-destructive">
           {errorMessage}
         </p>
       ) : null}
-      <Button type="submit" disabled={pending || !name.trim() || !locationId}>
+      <Button
+        type="submit"
+        // aria-disabled while pending keeps keyboard focus on the button.
+        disabled={!pending && (!name.trim() || !locationId)}
+        aria-disabled={pending || undefined}
+        aria-describedby={errorMessage ? "pair-device-error" : undefined}
+      >
         {pending ? t("pairing") : t("pair")}
       </Button>
     </form>

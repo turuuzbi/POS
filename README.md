@@ -69,7 +69,8 @@ E2E needs a browser once: `pnpm exec playwright install chromium`. Alternatively
 one with `PLAYWRIGHT_CHROMIUM_EXECUTABLE=/path/to/chrome`. Locally, `pnpm test:e2e` builds the app
 first unless a server is already running on the port. It runs against your seeded dev database
 and resets only what the tests depend on: seed users' language, lockouts, and devices paired by
-earlier runs.
+earlier runs. To test a deployed instance, set `E2E_BASE_URL`, and set `E2E_DATABASE_URL` if its
+database should be reset too.
 
 ## Ground rules
 

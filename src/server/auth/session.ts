@@ -1,7 +1,8 @@
 import "server-only";
 import { redirect } from "next/navigation";
 import { cache } from "react";
-import { hasPermission, type Permission, type Role } from "@/domain/permissions";
+import { can, canAccessLocation } from "@/domain/access";
+import type { Permission, Role } from "@/domain/permissions";
 import { safeEqual, sha256 } from "../crypto";
 import { db } from "../db";
 import { readDeviceToken } from "./device";
@@ -72,15 +73,7 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   };
 });
 
-export function canAccessLocation(user: CurrentUser, locationId: string): boolean {
-  return user.locationIds === "ALL" || user.locationIds.includes(locationId);
-}
-
-export function can(user: CurrentUser, permission: Permission, locationId?: string): boolean {
-  return (
-    hasPermission(user.role, permission) && (!locationId || canAccessLocation(user, locationId))
-  );
-}
+export { can, canAccessLocation };
 
 /** For pages/layouts: redirect to sign-in when there is no valid session. */
 export async function requireUser(): Promise<CurrentUser> {

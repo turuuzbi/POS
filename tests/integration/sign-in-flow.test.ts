@@ -96,6 +96,7 @@ describe("PIN sign-in through Auth.js", () => {
       data: {
         key: throttleKeys.device(device.id),
         failures: 9,
+        windowStart: new Date(),
         lastFailureAt: new Date(),
         lockedUntil: new Date(Date.now() + 60_000),
       },

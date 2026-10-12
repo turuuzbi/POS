@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { grantApproval, verifyApproval } from "@/server/auth/approval";
 import { verifyPasswordSignIn, verifyPinSignIn } from "@/server/auth/credentials";
 import { THROTTLE_RULES } from "@/server/auth/lockout";
-import { throttleKeys } from "@/server/auth/throttle";
+import { emailKey, throttleKeys } from "@/server/auth/throttle";
 import { db, resetDatabase } from "../support/db";
 import { createLocation, createUser, pairDevice } from "../support/fixtures";
 
@@ -43,16 +43,16 @@ describe("password sign-in", () => {
   });
 
   it("locks the account for that source after repeated failures, even for the right password", async () => {
-    const user = await createUser({ role: "MANAGER", email: "m@shop.mn", password: PASSWORD });
+    await createUser({ role: "MANAGER", email: "m@shop.mn", password: PASSWORD });
     const now = new Date("2026-05-01T09:00:00Z");
     const attacker = { now, ip: "203.0.113.7" };
-    for (let i = 0; i <= THROTTLE_RULES.accountFromIp.freeAttempts; i++) {
+    const rule = THROTTLE_RULES.accountFromSource;
+    for (let i = 0; i <= rule.freeAttempts; i++) {
       await verifyPasswordSignIn(db, { email: "m@shop.mn", password: "wrong password!" }, attacker);
     }
-    const bucket = await db.authThrottle.findUniqueOrThrow({
-      where: { key: throttleKeys.accountFromIp(user.id, attacker.ip) },
-    });
-    expect(bucket.failures).toBe(THROTTLE_RULES.accountFromIp.freeAttempts + 1);
+    const key = throttleKeys.accountFromSource(emailKey("m@shop.mn"), attacker.ip);
+    const bucket = await db.authThrottle.findUniqueOrThrow({ where: { key } });
+    expect(bucket.failures).toBe(rule.freeAttempts + 1);
     expect(bucket.lockedUntil?.getTime()).toBeGreaterThan(now.getTime());
 
     // Locked from the attacker's address, even with the right password…
@@ -66,41 +66,144 @@ describe("password sign-in", () => {
       { now, ip: "198.51.100.20" },
     );
     expect(elsewhere.ok).toBe(true);
-    // Success clears the account-wide bucket, but the attacker's own bucket stays locked.
-    expect(await db.authThrottle.count({ where: { key: throttleKeys.account(user.id) } })).toBe(0);
+    // The attacker's own bucket stays locked.
     expect(
       await verifyPasswordSignIn(db, { email: "m@shop.mn", password: PASSWORD }, attacker),
     ).toEqual({ ok: false, reason: "INVALID" });
   });
 
-  it("forgets failures older than the window (no slow-drip escalation)", async () => {
-    const user = await createUser({ role: "MANAGER", email: "m@shop.mn", password: PASSWORD });
+  it("counts failures in fixed windows: a new window starts fresh", async () => {
+    await createUser({ role: "MANAGER", email: "m@shop.mn", password: PASSWORD });
     const ip = "203.0.113.8";
+    const rule = THROTTLE_RULES.accountFromSource;
     const start = new Date("2026-05-01T09:00:00Z");
-    for (let i = 0; i < THROTTLE_RULES.accountFromIp.freeAttempts; i++) {
+    for (let i = 0; i < rule.freeAttempts; i++) {
       await verifyPasswordSignIn(
         db,
         { email: "m@shop.mn", password: "nope nope nope" },
         { now: start, ip },
       );
     }
-    const later = new Date(start.getTime() + THROTTLE_RULES.accountFromIp.windowMs + 1);
+    const later = new Date(start.getTime() + rule.windowMs + 1);
     await verifyPasswordSignIn(
       db,
       { email: "m@shop.mn", password: "nope nope nope" },
       { now: later, ip },
     );
     const bucket = await db.authThrottle.findUniqueOrThrow({
-      where: { key: throttleKeys.accountFromIp(user.id, ip) },
+      where: { key: throttleKeys.accountFromSource(emailKey("m@shop.mn"), ip) },
     });
     expect(bucket.failures).toBe(1);
     expect(bucket.lockedUntil).toBeNull();
   });
 
-  it("rate-limits a source that sprays many accounts, and says so", async () => {
+  it("a slow drip of failures can't keep escalating the lock", async () => {
+    await createUser({ role: "OWNER", email: "o@shop.mn", password: PASSWORD });
+    const ip = "203.0.113.11";
+    const start = new Date("2026-05-01T00:00:00Z").getTime();
+    // One wrong password every 15 minutes for 24 hours.
+    for (let minute = 0; minute < 24 * 60; minute += 15) {
+      await verifyPasswordSignIn(
+        db,
+        { email: "o@shop.mn", password: "drip drip drip" },
+        { now: new Date(start + minute * 60_000), ip },
+      );
+    }
+    // Shortly after the last drip, the owner from their usual place still gets in.
+    const result = await verifyPasswordSignIn(
+      db,
+      { email: "o@shop.mn", password: PASSWORD },
+      { now: new Date(start + 24 * 60 * 60_000), ip: "198.51.100.1" },
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("a distributed attack can't lock the owner out of a source they've used before", async () => {
+    await createUser({ role: "OWNER", email: "o@shop.mn", password: PASSWORD });
+    const now = new Date("2026-05-01T09:00:00Z");
+    const shop = "198.51.100.10";
+    expect(
+      (
+        await verifyPasswordSignIn(
+          db,
+          { email: "o@shop.mn", password: PASSWORD },
+          { now, ip: shop },
+        )
+      ).ok,
+    ).toBe(true);
+    // Guessing from many addresses trips the account-wide bucket…
+    for (let i = 0; i <= THROTTLE_RULES.account.freeAttempts; i++) {
+      await verifyPasswordSignIn(
+        db,
+        { email: "o@shop.mn", password: `guess-${i}-guess` },
+        { now, ip: `203.0.113.${100 + i}` },
+      );
+    }
+    // …which blocks new sources, even with the right password…
+    expect(
+      await verifyPasswordSignIn(
+        db,
+        { email: "o@shop.mn", password: PASSWORD },
+        { now, ip: "192.0.2.77" },
+      ),
+    ).toEqual({ ok: false, reason: "INVALID" });
+    // …but not the owner's trusted shop network.
+    expect(
+      (
+        await verifyPasswordSignIn(
+          db,
+          { email: "o@shop.mn", password: PASSWORD },
+          { now, ip: shop },
+        )
+      ).ok,
+    ).toBe(true);
+  });
+
+  it("answers identically for real and unknown emails (no existence oracle)", async () => {
+    await createUser({ role: "MANAGER", email: "real@shop.mn", password: PASSWORD });
+    const now = new Date("2026-05-01T09:00:00Z");
+    const probe = async (email: string, ip: string) => {
+      const answers: string[] = [];
+      for (let i = 0; i < 10; i++) {
+        const r = await verifyPasswordSignIn(db, { email, password: "wrong-wrong" }, { now, ip });
+        answers.push(r.ok ? "ok" : r.reason);
+      }
+      for (let i = 0; i < THROTTLE_RULES.source.freeAttempts; i++) {
+        const r = await verifyPasswordSignIn(
+          db,
+          { email: `filler${i}@shop.mn`, password: "wrong-wrong" },
+          { now, ip },
+        );
+        answers.push(r.ok ? "ok" : r.reason);
+      }
+      return answers;
+    };
+    const real = await probe("real@shop.mn", "203.0.113.20");
+    const unknown = await probe("ghost@shop.mn", "203.0.113.21");
+    expect(real).toEqual(unknown);
+    expect(real.at(-1)).toBe("RATE_LIMITED");
+  });
+
+  it("never lets a malformed client address escape throttling", async () => {
+    await createUser({ role: "MANAGER", email: "m@shop.mn", password: PASSWORD });
+    const now = new Date("2026-05-01T09:00:00Z");
+    for (let i = 0; i <= THROTTLE_RULES.accountFromSource.freeAttempts; i++) {
+      const ip = `${"f".repeat(3000)}${i}`; // oversized, rotating "X-Forwarded-For"
+      await verifyPasswordSignIn(db, { email: "m@shop.mn", password: "wrong pass!" }, { now, ip });
+    }
+    expect(
+      await verifyPasswordSignIn(
+        db,
+        { email: "m@shop.mn", password: PASSWORD },
+        { now, ip: "f".repeat(3000) },
+      ),
+    ).toEqual({ ok: false, reason: "INVALID" });
+  });
+
+  it("rate-limits a source that sprays many accounts, and audits unknown emails", async () => {
     const now = new Date("2026-05-01T09:00:00Z");
     const ip = "203.0.113.9";
-    for (let i = 0; i <= THROTTLE_RULES.ip.freeAttempts; i++) {
+    for (let i = 0; i <= THROTTLE_RULES.source.freeAttempts; i++) {
       await verifyPasswordSignIn(
         db,
         { email: `nobody${i}@shop.mn`, password: "x".repeat(12) },
@@ -114,10 +217,9 @@ describe("password sign-in", () => {
         { now, ip },
       ),
     ).toEqual({ ok: false, reason: "RATE_LIMITED" });
-    // Unknown emails are audited too (without the attempted address).
     expect(
       await db.auditLog.count({ where: { action: "auth.login_failed", entityId: null } }),
-    ).toBe(THROTTLE_RULES.ip.freeAttempts + 1);
+    ).toBe(THROTTLE_RULES.source.freeAttempts + 2);
   });
 });
 

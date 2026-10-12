@@ -6,7 +6,16 @@ import { findActiveDevice, type ActiveDevice } from "./device";
 import { THROTTLE_RULES } from "./lockout";
 import { burnPasswordCheck, verifyPassword } from "./password";
 import { pinLookup, pinSchema } from "./pin";
-import { clearThrottle, isThrottled, recordFailure, throttleKeys, UNKNOWN_IP } from "./throttle";
+import {
+  clearThrottle,
+  emailKey,
+  isThrottled,
+  markTrustedSource,
+  recordFailures,
+  throttleKeys,
+  throttleSource,
+  throttleState,
+} from "./throttle";
 
 /**
  * Credential verification, independent of Auth.js so it can be tested
@@ -45,55 +54,72 @@ export async function verifyPasswordSignIn(
   ctx: Context = {},
 ): Promise<SignInResult> {
   const now = ctx.now ?? new Date();
-  const ip = ctx.ip?.trim() || UNKNOWN_IP;
+  const source = throttleSource(ctx.ip);
   const email = input.email.trim().toLowerCase();
-  const user = await client.user.findUnique({ where: { email } });
+  const account = emailKey(email);
+  const keys = {
+    source: throttleKeys.source(source),
+    account: throttleKeys.account(account),
+    accountFromSource: throttleKeys.accountFromSource(account, source),
+  };
+  const failureBuckets = [
+    { key: keys.source, rule: THROTTLE_RULES.source },
+    { key: keys.account, rule: THROTTLE_RULES.account },
+    { key: keys.accountFromSource, rule: THROTTLE_RULES.accountFromSource },
+  ];
 
-  const ipKey = throttleKeys.ip(ip);
-  const accountKeys = user
-    ? [throttleKeys.account(user.id), throttleKeys.accountFromIp(user.id, ip)]
-    : [];
+  // Same queries whether or not the email exists: buckets are keyed by the
+  // email itself, never by "is there such a user".
+  const [user, state] = await Promise.all([
+    client.user.findUnique({ where: { email } }),
+    throttleState(
+      client,
+      [keys.source, keys.account, keys.accountFromSource],
+      throttleKeys.trusted(account, source),
+      now,
+    ),
+  ]);
 
-  if (await isThrottled(client, [ipKey], now)) {
+  const fail = async (
+    reason: "INVALID" | "RATE_LIMITED",
+    buckets = failureBuckets,
+  ): Promise<SignInResult> => {
+    await recordFailures(client, buckets, now);
+    await audit(client, {
+      actorId: null,
+      action: "auth.login_failed",
+      entityType: "User",
+      entityId: user?.id ?? null,
+      meta: { method: "password", throttled: reason === "RATE_LIMITED" || undefined },
+      ip: ctx.ip,
+      userAgent: ctx.userAgent,
+    });
+    return { ok: false, reason };
+  };
+
+  if (state.locked.has(keys.source)) {
+    // A locked source only extends its own lock (no collateral on accounts).
     await burnPasswordCheck(input.password);
-    return { ok: false, reason: "RATE_LIMITED" };
+    return fail("RATE_LIMITED", [failureBuckets[0]!]);
   }
-  if (await isThrottled(client, accountKeys, now)) {
+  // The account-wide lock stops distributed guessing, but never applies to
+  // a source this account has signed in from before.
+  const accountLocked =
+    state.locked.has(keys.accountFromSource) || (state.locked.has(keys.account) && !state.trusted);
+  if (accountLocked) {
     // Same cost and same answer as a wrong password; don't verify while locked.
     await burnPasswordCheck(input.password);
-    return { ok: false, reason: "INVALID" };
+    return fail("INVALID");
   }
 
   const canSignIn = user !== null && user.passwordHash !== null && user.isActive;
   const valid = canSignIn
     ? await verifyPassword(user.passwordHash!, input.password)
     : (await burnPasswordCheck(input.password), false);
+  if (!valid || !user) return fail("INVALID");
 
-  if (!valid || !user) {
-    await recordFailure(client, ipKey, THROTTLE_RULES.ip, now);
-    if (user) {
-      await recordFailure(client, throttleKeys.account(user.id), THROTTLE_RULES.account, now);
-      await recordFailure(
-        client,
-        throttleKeys.accountFromIp(user.id, ip),
-        THROTTLE_RULES.accountFromIp,
-        now,
-      );
-    }
-    // Audited for unknown emails too (no PII), which also evens out timing.
-    await audit(client, {
-      actorId: null,
-      action: "auth.login_failed",
-      entityType: "User",
-      entityId: user?.id ?? null,
-      meta: { method: "password" },
-      ip: ctx.ip,
-      userAgent: ctx.userAgent,
-    });
-    return { ok: false, reason: "INVALID" };
-  }
-
-  await clearThrottle(client, accountKeys);
+  await clearThrottle(client, [keys.account, keys.accountFromSource]);
+  await markTrustedSource(client, throttleKeys.trusted(account, source), now);
   await client.user.update({ where: { id: user.id }, data: { lastLoginAt: now } });
   await audit(client, {
     actorId: user.id,
@@ -145,12 +171,12 @@ export async function verifyDevicePin(
   const allowedHere = user?.role === "OWNER" || locationIds.includes(device.locationId);
 
   if (!user || !user.isActive || !allowedHere) {
-    const { failures, lockedUntil } = await recordFailure(
+    const recorded = await recordFailures(
       client,
-      deviceKey,
-      THROTTLE_RULES.device,
+      [{ key: deviceKey, rule: THROTTLE_RULES.device }],
       now,
     );
+    const { failures, lockedUntil } = recorded.get(deviceKey) ?? { failures: 1, lockedUntil: null };
     await audit(client, {
       actorId: null,
       action: "auth.pin_failed",

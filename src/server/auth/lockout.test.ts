@@ -3,7 +3,7 @@ import { isLocked, lockUntilAfterFailure, THROTTLE_RULES } from "./lockout";
 
 const now = new Date("2026-01-01T00:00:00Z");
 const minutes = (date: Date | null) => (date ? (date.getTime() - now.getTime()) / 60_000 : null);
-const rule = THROTTLE_RULES.accountFromIp;
+const rule = THROTTLE_RULES.accountFromSource;
 
 describe("lockUntilAfterFailure", () => {
   it("allows the free attempts without locking", () => {

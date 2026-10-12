@@ -987,8 +987,11 @@ model Shift {
   refunds       Refund[]
   zReport       ZReport?
 
-  /// At most one OPEN shift per register, enforced by the database.
-  @@unique([registerId], map: "Shift_one_open_per_register", where: raw("status = 'OPEN'"))
+  /// At most one OPEN shift per register, enforced by the database. Both
+  /// columns are in the key so Prisma's generated `registerId_status` lookup
+  /// always carries the status (a bare `registerId` "unique" would match
+  /// closed shifts too). Query with { registerId, status: "OPEN" }.
+  @@unique([registerId, status], map: "Shift_one_open_per_register", where: raw("status = 'OPEN'"))
   @@index([registerId, openedAt])
   @@index([locationId, openedAt])
 }
@@ -1458,15 +1461,29 @@ model Sequence {
 }
 
 /// Brute-force throttling buckets for sign-in and PIN entry. Keys:
-///   "pw:ip:<ip>", "pw:acct:<userId>", "pw:acct-ip:<userId>:<ip>", "pin:dev:<deviceId>".
-/// Failures older than the rule's window are forgotten (no slow-drip escalation).
+///   "pw:src:<source>", "pw:acct:<emailKey>", "pw:acct-src:<emailKey>:<source>", "pin:dev:<deviceId>"
+/// where <emailKey> is an HMAC of the normalised email — so unknown emails get
+/// exactly the same treatment as real accounts — and <source> is the client IP
+/// (IPv6 grouped by /64). Failures are counted in fixed windows.
 model AuthThrottle {
   key           String    @id
   failures      Int       @default(0)
+  windowStart   DateTime
   lastFailureAt DateTime
   lockedUntil   DateTime?
 
   @@index([lastFailureAt])
+}
+
+/// Sources (emailKey + client network) that have signed in successfully
+/// before. The account-wide lock, which exists to stop distributed guessing,
+/// does not apply to them, so an attack can't lock the owner out of their
+/// usual shop/home network.
+model TrustedSignInSource {
+  key        String   @id /// "<emailKey>:<source>"
+  lastSeenAt DateTime
+
+  @@index([lastSeenAt])
 }
 
 /// Sessions ended by sign-out before their JWT expiry; checked on every request.
