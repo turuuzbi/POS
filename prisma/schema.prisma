@@ -1,0 +1,1465 @@
+// =============================================================================
+// POS — Prisma schema (PROPOSED, Phase 0 — awaiting approval)
+// =============================================================================
+//
+// Conventions
+// -----------
+// * Money:    BigInt, integer MNT minor units (möngö, 1₮ = 100). Never floats.
+//             Field names are plain (`price`, `vatAmount`); the BigInt type makes
+//             accidental `number` arithmetic a compile error.
+// * Quantity: Int, thousandths of the product's unit (`*Milli`; 1 piece = 1000,
+//             1.250 kg = 1250). Keeps weighed goods integer-only.
+// * Rates:    Int basis points (`*Bps`; 1000 = 10%).
+// * IDs:      UUIDv7. Sale / Refund / OpenTicket ids are generated on the
+//             client and double as idempotency keys for offline retries.
+// * Time:     timestamps are stored in UTC; reports bucket by Location.timezone.
+// * Ledgers:  StockMovement, LoyaltyEntry, StoreCreditEntry, GiftCardEntry are
+//             the source of truth. Balance columns (StockLevel.onHandMilli,
+//             Customer.loyaltyPoints, …) are caches written only by their
+//             service, in the same transaction as the ledger row, and can be
+//             rebuilt from the ledger at any time.
+// * Immutability: sales, refunds, payments, ledgers, cash movements, Z-reports
+//             and the audit log are append-only. A migration adds Postgres
+//             triggers that reject UPDATE/DELETE on those tables.
+// * Deletes:  catalog, customers and users are archived (`isActive = false`),
+//             never hard-deleted once referenced; FKs default to RESTRICT.
+// =============================================================================
+
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  extensions = [pg_trgm]
+}
+
+// -----------------------------------------------------------------------------
+// Enums
+// -----------------------------------------------------------------------------
+
+enum Role {
+  OWNER
+  MANAGER
+  CASHIER
+}
+
+enum ProductType {
+  STANDARD // stocked goods
+  SERVICE // never stock-tracked
+  GIFT_CARD // selling it issues a GiftCard; a liability, not revenue
+}
+
+enum UnitOfMeasure {
+  PIECE
+  KG
+  LITER
+  METER
+}
+
+enum TaxTreatment {
+  STANDARD // VAT at TaxClass.vatRateBps
+  ZERO_RATED // 0% VAT, still reported
+  EXEMPT // outside VAT
+}
+
+enum DiscountKind {
+  PERCENT
+  FIXED
+}
+
+enum DiscountTarget {
+  ORDER // whole cart
+  PRODUCTS // specific products / categories
+}
+
+enum DiscountScope {
+  LINE
+  CART
+}
+
+enum DiscountSource {
+  MANUAL // cashier-entered (permission-gated)
+  AUTOMATIC // automatic promotion
+  CODE // coupon code
+  LOYALTY // loyalty points redemption (treated as a discount, reduces the VAT base)
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  QPAY
+  BANK_TRANSFER
+  GIFT_CARD
+  STORE_CREDIT
+  EXCHANGE_CREDIT // value carried from a Refund into its exchange Sale
+}
+
+enum PaymentIntentStatus {
+  PENDING
+  PAID
+  FAILED
+  CANCELLED
+  EXPIRED
+  REFUNDED
+}
+
+enum SaleOrigin {
+  ONLINE
+  OFFLINE_SYNC
+}
+
+enum VoidReason {
+  ENTRY_ERROR
+  CUSTOMER_CANCELLED
+  PAYMENT_PROBLEM
+  OTHER
+}
+
+enum ReturnReason {
+  DEFECTIVE
+  DAMAGED
+  WRONG_ITEM
+  NOT_AS_DESCRIBED
+  CHANGED_MIND
+  OTHER
+}
+
+enum StockMovementType {
+  OPENING // initial stock / CSV import
+  SALE
+  SALE_VOID
+  RETURN_RESTOCK
+  PURCHASE_RECEIPT
+  ADJUSTMENT
+  STOCKTAKE
+}
+
+enum AdjustmentReason {
+  DAMAGED
+  EXPIRED
+  LOST_STOLEN
+  FOUND
+  INTERNAL_USE
+  CORRECTION
+  OTHER
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  ORDERED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+enum StocktakeStatus {
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum ShiftStatus {
+  OPEN
+  CLOSED
+}
+
+enum CashMovementType {
+  CASH_IN
+  CASH_OUT
+}
+
+enum LoyaltyEntryType {
+  EARN
+  REDEEM
+  REVERSAL // earned/redeemed points reversed by a refund or void
+  ADJUSTMENT
+}
+
+enum StoreCreditEntryType {
+  ISSUE // e.g. refund to store credit
+  REDEEM // used as tender
+  REVERSAL
+  ADJUSTMENT
+}
+
+enum GiftCardStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum GiftCardEntryType {
+  ISSUE
+  REDEEM
+  REFUND // value returned to the card by a refund
+  REVERSAL // sale void
+  ADJUSTMENT
+}
+
+enum FiscalStatus {
+  PENDING
+  ISSUED
+  FAILED
+  CANCELLED
+}
+
+enum ReceiptChannel {
+  SMS
+  EMAIL
+}
+
+enum DeliveryStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
+enum TicketStatus {
+  OPEN
+  CLOSED // converted into a Sale
+  CANCELLED
+}
+
+// -----------------------------------------------------------------------------
+// Business, locations, registers, devices
+// -----------------------------------------------------------------------------
+
+/// Singleton (id = 1). Business-wide settings, editable by OWNER.
+model BusinessSettings {
+  id                Int     @id @default(1)
+  businessName      String
+  legalName         String?
+  taxId             String? /// taxpayer registration number (ТТД)
+  phone             String?
+  email             String?
+  address           String?
+  logoUrl           String?
+  defaultLocale     String  @default("mn")
+  currency          String  @default("MNT") @db.Char(3)
+  defaultTaxClassId String? @db.Uuid
+  pricesIncludeTax  Boolean @default(true) /// default for new products
+
+  /// Sale totals are rounded to a multiple of this (möngö); 100 = whole ₮.
+  /// The difference is stored in Sale.roundingAmount.
+  totalRoundingUnit  BigInt  @default(100)
+  allowNegativeStock Boolean @default(true) /// sell-through with a warning instead of blocking the till
+
+  tipsEnabled   Boolean @default(false)
+  tipPresetsBps Int[]   @default([500, 1000, 1500])
+
+  loyaltyEnabled    Boolean @default(false)
+  loyaltyEarnPer    BigInt  @default(100000) /// spend (möngö) per 1 point earned
+  loyaltyPointValue BigInt  @default(1000) /// value (möngö) of 1 point when redeemed
+
+  receiptHeader String?
+  receiptFooter String?
+  updatedAt     DateTime @updatedAt
+
+  defaultTaxClass TaxClass? @relation(fields: [defaultTaxClassId], references: [id])
+}
+
+model Location {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  code           String   @unique /// short code used in document numbers, e.g. "UB1"
+  name           String
+  address        String?
+  phone          String?
+  timezone       String   @default("Asia/Ulaanbaatar")
+  restaurantMode Boolean  @default(false) /// feature flag: tables/tabs, modifiers, kitchen tickets
+  receiptHeader  String? /// overrides BusinessSettings.receiptHeader
+  /// Per-branch e-receipt adapter config.
+  /// TODO(ebarimt): confirm required fields with the real PosAPI; do not guess.
+  fiscalConfig   Json?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  registers      Register[]
+  devices        Device[]
+  users          UserLocation[]
+  stockLevels    StockLevel[]
+  stockMovements StockMovement[]
+  adjustments    StockAdjustment[]
+  purchaseOrders PurchaseOrder[]
+  goodsReceipts  GoodsReceipt[]
+  stocktakes     Stocktake[]
+  shifts         Shift[]
+  sales          Sale[]
+  refunds        Refund[]
+  quickKeys      QuickKey[]
+  tables         DiningTable[]
+  openTickets    OpenTicket[]
+  kitchenTickets KitchenTicket[]
+}
+
+model Register {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  locationId  String   @db.Uuid
+  code        String /// e.g. "R1"; unique per location
+  name        String
+  /// The currently open shift. A single nullable unique pointer enforces
+  /// "at most one open shift per register" without a partial index.
+  openShiftId String?  @unique @db.Uuid
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  location  Location  @relation(fields: [locationId], references: [id])
+  openShift Shift?    @relation("RegisterOpenShift", fields: [openShiftId], references: [id])
+  shifts    Shift[]   @relation("RegisterShifts")
+  devices   Device[]
+  sales     Sale[]
+  refunds   Refund[]
+  zReports  ZReport[]
+
+  @@unique([locationId, code])
+}
+
+/// A browser/tablet paired to a register by a manager. PIN login is only
+/// accepted from a paired device (httpOnly device cookie, hashed here).
+model Device {
+  id         String    @id @default(uuid(7)) @db.Uuid
+  locationId String    @db.Uuid
+  registerId String?   @db.Uuid
+  name       String
+  tokenHash  String    @unique /// SHA-256 of the device secret
+  pairedById String    @db.Uuid
+  pairedAt   DateTime  @default(now())
+  lastSeenAt DateTime?
+  revokedAt  DateTime?
+
+  location Location  @relation(fields: [locationId], references: [id])
+  register Register? @relation(fields: [registerId], references: [id])
+  pairedBy User      @relation("DevicePairedBy", fields: [pairedById], references: [id])
+}
+
+// -----------------------------------------------------------------------------
+// Users & access
+// -----------------------------------------------------------------------------
+
+/// Auth.js (Credentials provider, JWT sessions). Role → permission mapping
+/// lives in code (src/server/auth/permissions.ts), checked server-side.
+model User {
+  id           String    @id @default(uuid(7)) @db.Uuid
+  name         String
+  email        String?   @unique /// required for OWNER/MANAGER password login
+  passwordHash String? /// argon2id
+  /// HMAC-SHA256(PIN, PIN_PEPPER): allows O(1) lookup of a unique PIN without
+  /// storing it; brute force needs the server secret + a paired device.
+  pinLookup    String?   @unique
+  role         Role      @default(CASHIER)
+  locale       String? /// "mn" | "en"; null = business default
+  isActive     Boolean   @default(true)
+  /// Bumped on role change / deactivation / password reset to invalidate JWTs.
+  tokenVersion Int       @default(0)
+  failedLogins Int       @default(0)
+  lockedUntil  DateTime?
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  locations              UserLocation[]
+  devicesPaired          Device[]           @relation("DevicePairedBy")
+  salesAsCashier         Sale[]             @relation("SaleCashier")
+  priceOverridesApproved SaleLine[]         @relation("PriceOverrideApprover")
+  discountsApproved      SaleDiscount[]     @relation("DiscountApprover")
+  voidsPerformed         SaleVoid[]         @relation("VoidPerformer")
+  voidsApproved          SaleVoid[]         @relation("VoidApprover")
+  refundsProcessed       Refund[]           @relation("RefundProcessor")
+  refundsApproved        Refund[]           @relation("RefundApprover")
+  shiftsOpened           Shift[]            @relation("ShiftOpenedBy")
+  shiftsClosed           Shift[]            @relation("ShiftClosedBy")
+  cashMovements          CashMovement[]     @relation("CashMovementCreatedBy")
+  cashMovementsApproved  CashMovement[]     @relation("CashMovementApprover")
+  stockMovements         StockMovement[]
+  stockAdjustments       StockAdjustment[]
+  purchaseOrders         PurchaseOrder[]
+  goodsReceipts          GoodsReceipt[]
+  stocktakesStarted      Stocktake[]        @relation("StocktakeStartedBy")
+  stocktakesCompleted    Stocktake[]        @relation("StocktakeCompletedBy")
+  giftCardsIssued        GiftCard[]
+  giftCardEntries        GiftCardEntry[]
+  loyaltyEntries         LoyaltyEntry[]
+  storeCreditEntries     StoreCreditEntry[]
+  paymentIntents         PaymentIntent[]
+  openTickets            OpenTicket[]
+  auditLogs              AuditLog[]
+}
+
+model UserLocation {
+  userId     String @db.Uuid
+  locationId String @db.Uuid
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@id([userId, locationId])
+  @@index([locationId])
+}
+
+// -----------------------------------------------------------------------------
+// Catalog
+// -----------------------------------------------------------------------------
+
+model TaxClass {
+  id             String       @id @default(uuid(7)) @db.Uuid
+  name           String       @unique /// e.g. "НӨАТ 10%", "НӨАТ-гүй"
+  treatment      TaxTreatment @default(STANDARD)
+  vatRateBps     Int          @default(1000)
+  /// City tax (НХАТ) for applicable goods; 0 for most products.
+  cityTaxRateBps Int          @default(0)
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+
+  products   Product[]
+  defaultFor BusinessSettings[]
+}
+
+model Category {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  name      String
+  parentId  String?  @db.Uuid
+  sortOrder Int      @default(0)
+  color     String? /// quick-key tile colour token
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  parent     Category?          @relation("CategoryTree", fields: [parentId], references: [id])
+  children   Category[]         @relation("CategoryTree")
+  products   Product[]
+  quickKeys  QuickKey[]
+  discounts  DiscountCategory[]
+  stocktakes Stocktake[]
+
+  @@index([parentId])
+}
+
+model Product {
+  id                    String        @id @default(uuid(7)) @db.Uuid
+  name                  String
+  description           String?
+  type                  ProductType   @default(STANDARD)
+  unit                  UnitOfMeasure @default(PIECE)
+  categoryId            String?       @db.Uuid
+  taxClassId            String        @db.Uuid
+  pricesIncludeTax      Boolean       @default(true)
+  trackStock            Boolean       @default(true)
+  imageUrl              String?
+  /// TODO(ebarimt): item classification code required on e-receipts —
+  /// confirm the exact code list/format with the real API.
+  taxClassificationCode String?
+  isActive              Boolean       @default(true)
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  category       Category?              @relation(fields: [categoryId], references: [id])
+  taxClass       TaxClass               @relation(fields: [taxClassId], references: [id])
+  options        ProductOption[]
+  variants       ProductVariant[]
+  modifierGroups ProductModifierGroup[]
+  quickKeys      QuickKey[]
+  discounts      DiscountProduct[]
+  saleLines      SaleLine[]
+
+  @@index([categoryId])
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin) // search-as-you-type (ILIKE)
+}
+
+/// Variant dimensions, e.g. Size: [S, M, L]; Color: [Black, White]. Max 3.
+model ProductOption {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  productId String   @db.Uuid
+  name      String
+  position  Int /// 1..3, maps to ProductVariant.option1..3
+  values    String[]
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, position])
+}
+
+/// The sellable, stock-keeping unit. Every product has ≥ 1 variant.
+model ProductVariant {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  productId String   @db.Uuid
+  sku       String?  @unique
+  name      String? /// e.g. "M / Black"; null for single-variant products
+  option1   String?
+  option2   String?
+  option3   String?
+  price     BigInt /// sell price; tax-inclusive or -exclusive per Product.pricesIncludeTax
+  cost      BigInt   @default(0) /// moving-average unit cost, updated on receiving
+  imageUrl  String?
+  position  Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  product            Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  barcodes           Barcode[]
+  stockLevels        StockLevel[]
+  stockMovements     StockMovement[]
+  supplierItems      SupplierItem[]
+  purchaseOrderLines PurchaseOrderLine[]
+  goodsReceiptLines  GoodsReceiptLine[]
+  stocktakeLines     StocktakeLine[]
+  saleLines          SaleLine[]
+
+  @@index([productId])
+}
+
+/// A variant can carry several barcodes (manufacturer EAN + in-store label).
+model Barcode {
+  id        String @id @default(uuid(7)) @db.Uuid
+  code      String @unique /// scan lookup is a single unique-index hit
+  variantId String @db.Uuid
+
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@index([variantId])
+}
+
+/// Checkout quick-key grid: tabs are categories (or "favourites" when null).
+model QuickKey {
+  id         String  @id @default(uuid(7)) @db.Uuid
+  locationId String? @db.Uuid /// null = all locations
+  categoryId String? @db.Uuid /// tab; null = favourites tab
+  productId  String  @db.Uuid
+  position   Int
+  color      String?
+
+  location Location? @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  product  Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([locationId, categoryId, position])
+}
+
+/// Restaurant mode: e.g. "Size" (exactly 1), "Extras" (0..3).
+model ModifierGroup {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  name      String
+  minSelect Int      @default(0)
+  maxSelect Int? /// null = unlimited
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  modifiers Modifier[]
+  products  ProductModifierGroup[]
+}
+
+model Modifier {
+  id         String  @id @default(uuid(7)) @db.Uuid
+  groupId    String  @db.Uuid
+  name       String
+  priceDelta BigInt  @default(0) /// per unit, same tax mode as the product
+  sortOrder  Int     @default(0)
+  isActive   Boolean @default(true)
+
+  group     ModifierGroup      @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  saleLines SaleLineModifier[]
+
+  @@index([groupId])
+}
+
+model ProductModifierGroup {
+  productId String @db.Uuid
+  groupId   String @db.Uuid
+  sortOrder Int    @default(0)
+
+  product Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  group   ModifierGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@id([productId, groupId])
+}
+
+// -----------------------------------------------------------------------------
+// Suppliers & purchasing
+// -----------------------------------------------------------------------------
+
+model Supplier {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  name        String
+  contactName String?
+  phone       String?
+  email       String?
+  taxId       String?
+  address     String?
+  notes       String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items          SupplierItem[]
+  purchaseOrders PurchaseOrder[]
+  goodsReceipts  GoodsReceipt[]
+}
+
+model SupplierItem {
+  supplierId  String  @db.Uuid
+  variantId   String  @db.Uuid
+  supplierSku String?
+  cost        BigInt? /// last agreed unit cost from this supplier
+  isPreferred Boolean @default(false)
+
+  supplier Supplier       @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  variant  ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@id([supplierId, variantId])
+  @@index([variantId])
+}
+
+model PurchaseOrder {
+  id          String              @id @default(uuid(7)) @db.Uuid
+  number      String              @unique /// "PO-000123"
+  supplierId  String              @db.Uuid
+  locationId  String              @db.Uuid
+  status      PurchaseOrderStatus @default(DRAFT)
+  expectedAt  DateTime?
+  orderedAt   DateTime?
+  note        String?
+  createdById String              @db.Uuid
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  supplier  Supplier            @relation(fields: [supplierId], references: [id])
+  location  Location            @relation(fields: [locationId], references: [id])
+  createdBy User                @relation(fields: [createdById], references: [id])
+  lines     PurchaseOrderLine[]
+  receipts  GoodsReceipt[]
+
+  @@index([supplierId])
+  @@index([locationId, status])
+}
+
+model PurchaseOrderLine {
+  id               String @id @default(uuid(7)) @db.Uuid
+  purchaseOrderId  String @db.Uuid
+  variantId        String @db.Uuid
+  qtyOrderedMilli  Int
+  /// Cache of Σ GoodsReceiptLine.qtyMilli for this line (written by the receiving service).
+  qtyReceivedMilli Int    @default(0)
+  unitCost         BigInt
+
+  purchaseOrder PurchaseOrder      @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  variant       ProductVariant     @relation(fields: [variantId], references: [id])
+  receiptLines  GoodsReceiptLine[]
+
+  @@unique([purchaseOrderId, variantId])
+}
+
+/// Receiving (against a PO or ad-hoc). Each line produces one PURCHASE_RECEIPT movement.
+model GoodsReceipt {
+  id              String   @id @default(uuid(7)) @db.Uuid
+  number          String   @unique /// "GR-000123"
+  purchaseOrderId String?  @db.Uuid
+  supplierId      String?  @db.Uuid
+  locationId      String   @db.Uuid
+  note            String?
+  receivedById    String   @db.Uuid
+  receivedAt      DateTime @default(now())
+
+  purchaseOrder PurchaseOrder?     @relation(fields: [purchaseOrderId], references: [id])
+  supplier      Supplier?          @relation(fields: [supplierId], references: [id])
+  location      Location           @relation(fields: [locationId], references: [id])
+  receivedBy    User               @relation(fields: [receivedById], references: [id])
+  lines         GoodsReceiptLine[]
+  movements     StockMovement[]
+
+  @@index([purchaseOrderId])
+  @@index([locationId, receivedAt])
+}
+
+model GoodsReceiptLine {
+  id                  String  @id @default(uuid(7)) @db.Uuid
+  goodsReceiptId      String  @db.Uuid
+  purchaseOrderLineId String? @db.Uuid
+  variantId           String  @db.Uuid
+  qtyMilli            Int
+  unitCost            BigInt
+
+  goodsReceipt      GoodsReceipt       @relation(fields: [goodsReceiptId], references: [id], onDelete: Cascade)
+  purchaseOrderLine PurchaseOrderLine? @relation(fields: [purchaseOrderLineId], references: [id])
+  variant           ProductVariant     @relation(fields: [variantId], references: [id])
+
+  @@index([goodsReceiptId])
+}
+
+// -----------------------------------------------------------------------------
+// Inventory (ledger)
+// -----------------------------------------------------------------------------
+
+/// Per-location stock projection + reorder settings.
+/// onHandMilli == Σ StockMovement.qtyDeltaMilli for (variant, location).
+/// Written ONLY by the stock service (row lock: SELECT … FOR UPDATE).
+model StockLevel {
+  variantId         String   @db.Uuid
+  locationId        String   @db.Uuid
+  onHandMilli       Int      @default(0)
+  reorderPointMilli Int? /// low-stock alert threshold
+  reorderQtyMilli   Int? /// suggested PO quantity
+  updatedAt         DateTime @updatedAt
+
+  variant  ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  location Location       @relation(fields: [locationId], references: [id])
+
+  @@id([variantId, locationId])
+  @@index([locationId])
+}
+
+/// Append-only. The single source of truth for stock.
+model StockMovement {
+  id                String            @id @default(uuid(7)) @db.Uuid
+  variantId         String            @db.Uuid
+  locationId        String            @db.Uuid
+  type              StockMovementType
+  qtyDeltaMilli     Int /// signed: + in, − out
+  balanceAfterMilli Int
+  unitCost          BigInt? /// purchase cost (receipts) or average cost snapshot (sales)
+  saleId            String?           @db.Uuid
+  refundId          String?           @db.Uuid
+  goodsReceiptId    String?           @db.Uuid
+  adjustmentId      String?           @db.Uuid
+  stocktakeId       String?           @db.Uuid
+  note              String?
+  createdById       String            @db.Uuid
+  createdAt         DateTime          @default(now())
+
+  variant      ProductVariant   @relation(fields: [variantId], references: [id])
+  location     Location         @relation(fields: [locationId], references: [id])
+  sale         Sale?            @relation(fields: [saleId], references: [id])
+  refund       Refund?          @relation(fields: [refundId], references: [id])
+  goodsReceipt GoodsReceipt?    @relation(fields: [goodsReceiptId], references: [id])
+  adjustment   StockAdjustment? @relation(fields: [adjustmentId], references: [id])
+  stocktake    Stocktake?       @relation(fields: [stocktakeId], references: [id])
+  createdBy    User             @relation(fields: [createdById], references: [id])
+
+  @@index([variantId, locationId, createdAt])
+  @@index([locationId, createdAt])
+  @@index([saleId])
+  @@index([refundId])
+}
+
+/// Header for a manual adjustment; each line is one ADJUSTMENT movement.
+model StockAdjustment {
+  id          String           @id @default(uuid(7)) @db.Uuid
+  locationId  String           @db.Uuid
+  reason      AdjustmentReason
+  note        String?
+  createdById String           @db.Uuid
+  createdAt   DateTime         @default(now())
+
+  location  Location        @relation(fields: [locationId], references: [id])
+  createdBy User            @relation(fields: [createdById], references: [id])
+  movements StockMovement[]
+
+  @@index([locationId, createdAt])
+}
+
+/// Stock count. On completion, variance (counted − on hand) is posted as STOCKTAKE movements.
+model Stocktake {
+  id            String          @id @default(uuid(7)) @db.Uuid
+  number        String          @unique /// "ST-000012"
+  locationId    String          @db.Uuid
+  categoryId    String?         @db.Uuid /// partial count scope; null = full count
+  status        StocktakeStatus @default(IN_PROGRESS)
+  note          String?
+  startedById   String          @db.Uuid
+  startedAt     DateTime        @default(now())
+  completedById String?         @db.Uuid
+  completedAt   DateTime?
+
+  location    Location        @relation(fields: [locationId], references: [id])
+  category    Category?       @relation(fields: [categoryId], references: [id])
+  startedBy   User            @relation("StocktakeStartedBy", fields: [startedById], references: [id])
+  completedBy User?           @relation("StocktakeCompletedBy", fields: [completedById], references: [id])
+  lines       StocktakeLine[]
+  movements   StockMovement[]
+
+  @@index([locationId, status])
+}
+
+model StocktakeLine {
+  id            String   @id @default(uuid(7)) @db.Uuid
+  stocktakeId   String   @db.Uuid
+  variantId     String   @db.Uuid
+  countedMilli  Int
+  expectedMilli Int? /// on-hand snapshot taken at completion
+  updatedAt     DateTime @updatedAt
+
+  stocktake Stocktake      @relation(fields: [stocktakeId], references: [id], onDelete: Cascade)
+  variant   ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@unique([stocktakeId, variantId])
+}
+
+// -----------------------------------------------------------------------------
+// Customers, loyalty, store credit, gift cards
+// -----------------------------------------------------------------------------
+
+model Customer {
+  id                 String   @id @default(uuid(7)) @db.Uuid
+  name               String
+  phone              String?  @unique /// normalised; primary checkout lookup key
+  email              String?
+  taxId              String? /// for B2B e-receipts
+  notes              String?
+  loyaltyPoints      Int      @default(0) /// cache of Σ LoyaltyEntry.points
+  storeCreditBalance BigInt   @default(0) /// cache of Σ StoreCreditEntry.amount
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  sales              Sale[]
+  refunds            Refund[]
+  loyaltyEntries     LoyaltyEntry[]
+  storeCreditEntries StoreCreditEntry[]
+  giftCards          GiftCard[]
+
+  @@index([email])
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin)
+}
+
+model LoyaltyEntry {
+  id           String           @id @default(uuid(7)) @db.Uuid
+  customerId   String           @db.Uuid
+  type         LoyaltyEntryType
+  points       Int /// signed
+  balanceAfter Int
+  saleId       String?          @db.Uuid
+  refundId     String?          @db.Uuid
+  note         String?
+  createdById  String?          @db.Uuid
+  createdAt    DateTime         @default(now())
+
+  customer  Customer @relation(fields: [customerId], references: [id])
+  sale      Sale?    @relation(fields: [saleId], references: [id])
+  refund    Refund?  @relation(fields: [refundId], references: [id])
+  createdBy User?    @relation(fields: [createdById], references: [id])
+
+  @@index([customerId, createdAt])
+}
+
+model StoreCreditEntry {
+  id           String               @id @default(uuid(7)) @db.Uuid
+  customerId   String               @db.Uuid
+  type         StoreCreditEntryType
+  amount       BigInt /// signed
+  balanceAfter BigInt
+  saleId       String?              @db.Uuid
+  refundId     String?              @db.Uuid
+  note         String?
+  createdById  String?              @db.Uuid
+  createdAt    DateTime             @default(now())
+
+  customer  Customer @relation(fields: [customerId], references: [id])
+  sale      Sale?    @relation(fields: [saleId], references: [id])
+  refund    Refund?  @relation(fields: [refundId], references: [id])
+  createdBy User?    @relation(fields: [createdById], references: [id])
+
+  @@index([customerId, createdAt])
+}
+
+model GiftCard {
+  id             String         @id @default(uuid(7)) @db.Uuid
+  /// HMAC-SHA256(code, GIFT_CARD_PEPPER). The bearer code is never stored.
+  codeHash       String         @unique
+  last4          String         @db.Char(4)
+  initialBalance BigInt
+  balance        BigInt /// cache of Σ GiftCardEntry.amount
+  status         GiftCardStatus @default(ACTIVE)
+  customerId     String?        @db.Uuid
+  expiresAt      DateTime?
+  saleLineId     String?        @unique @db.Uuid /// the sale line that sold it; null = manual/promo issue
+  issuedById     String         @db.Uuid
+  issuedAt       DateTime       @default(now())
+
+  customer       Customer?       @relation(fields: [customerId], references: [id])
+  saleLine       SaleLine?       @relation(fields: [saleLineId], references: [id])
+  issuedBy       User            @relation(fields: [issuedById], references: [id])
+  entries        GiftCardEntry[]
+  payments       SalePayment[]
+  refundPayments RefundPayment[]
+}
+
+model GiftCardEntry {
+  id           String            @id @default(uuid(7)) @db.Uuid
+  giftCardId   String            @db.Uuid
+  type         GiftCardEntryType
+  amount       BigInt /// signed
+  balanceAfter BigInt
+  saleId       String?           @db.Uuid
+  refundId     String?           @db.Uuid
+  note         String?
+  createdById  String            @db.Uuid
+  createdAt    DateTime          @default(now())
+
+  giftCard  GiftCard @relation(fields: [giftCardId], references: [id])
+  sale      Sale?    @relation(fields: [saleId], references: [id])
+  refund    Refund?  @relation(fields: [refundId], references: [id])
+  createdBy User     @relation(fields: [createdById], references: [id])
+
+  @@index([giftCardId, createdAt])
+}
+
+// -----------------------------------------------------------------------------
+// Discounts & promotions (rules)
+// -----------------------------------------------------------------------------
+
+/// Automatic promotions (code = null) and coupon codes. Applied instances are
+/// snapshotted into SaleDiscount, so editing a rule never changes past sales.
+model Discount {
+  id          String         @id @default(uuid(7)) @db.Uuid
+  name        String
+  code        String?        @unique
+  kind        DiscountKind
+  percentBps  Int? /// when kind = PERCENT
+  amount      BigInt? /// when kind = FIXED
+  target      DiscountTarget @default(ORDER)
+  minSubtotal BigInt?
+  minQtyMilli Int?
+  startsAt    DateTime?
+  endsAt      DateTime?
+  isActive    Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  products   DiscountProduct[]
+  categories DiscountCategory[]
+  applied    SaleDiscount[]
+
+  @@index([isActive, startsAt, endsAt])
+}
+
+model DiscountProduct {
+  discountId String @db.Uuid
+  productId  String @db.Uuid
+
+  discount Discount @relation(fields: [discountId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([discountId, productId])
+}
+
+model DiscountCategory {
+  discountId String @db.Uuid
+  categoryId String @db.Uuid
+
+  discount Discount @relation(fields: [discountId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([discountId, categoryId])
+}
+
+// -----------------------------------------------------------------------------
+// Registers & shifts
+// -----------------------------------------------------------------------------
+
+model Shift {
+  id            String      @id @default(uuid(7)) @db.Uuid
+  registerId    String      @db.Uuid
+  locationId    String      @db.Uuid
+  status        ShiftStatus @default(OPEN)
+  openedById    String      @db.Uuid
+  openedAt      DateTime    @default(now())
+  openingFloat  BigInt
+  closedById    String?     @db.Uuid
+  closedAt      DateTime?
+  expectedCash  BigInt? /// float + cash sales − cash refunds + cash in − cash out
+  countedCash   BigInt?
+  cashVariance  BigInt? /// counted − expected
+  /// Counted notes/coins, e.g. {"20000": 3, "1000": 12}
+  denominations Json?
+  closingNote   String?
+
+  register      Register       @relation("RegisterShifts", fields: [registerId], references: [id])
+  openOn        Register?      @relation("RegisterOpenShift")
+  location      Location       @relation(fields: [locationId], references: [id])
+  openedBy      User           @relation("ShiftOpenedBy", fields: [openedById], references: [id])
+  closedBy      User?          @relation("ShiftClosedBy", fields: [closedById], references: [id])
+  cashMovements CashMovement[]
+  sales         Sale[]
+  voids         SaleVoid[]
+  refunds       Refund[]
+  zReport       ZReport?
+
+  @@index([registerId, openedAt])
+  @@index([locationId, openedAt])
+}
+
+/// Append-only. Pay-ins / pay-outs during a shift.
+model CashMovement {
+  id           String           @id @default(uuid(7)) @db.Uuid
+  shiftId      String           @db.Uuid
+  type         CashMovementType
+  amount       BigInt /// positive; direction from type
+  reason       String
+  createdById  String           @db.Uuid
+  approvedById String?          @db.Uuid
+  createdAt    DateTime         @default(now())
+
+  shift      Shift @relation(fields: [shiftId], references: [id])
+  createdBy  User  @relation("CashMovementCreatedBy", fields: [createdById], references: [id])
+  approvedBy User? @relation("CashMovementApprover", fields: [approvedById], references: [id])
+
+  @@index([shiftId])
+}
+
+/// Append-only. Frozen end-of-shift totals (by method, tax, category, staff).
+model ZReport {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  shiftId    String   @unique @db.Uuid
+  registerId String   @db.Uuid
+  number     Int /// sequential per register
+  data       Json
+  createdAt  DateTime @default(now())
+
+  shift    Shift    @relation(fields: [shiftId], references: [id])
+  register Register @relation(fields: [registerId], references: [id])
+
+  @@unique([registerId, number])
+}
+
+// -----------------------------------------------------------------------------
+// Sales (append-only)
+// -----------------------------------------------------------------------------
+
+model Sale {
+  /// Client-generated UUIDv7 — the idempotency key. Replaying the same
+  /// checkout returns the existing sale instead of charging/deducting again.
+  id         String     @id @db.Uuid
+  number     String     @unique /// human receipt number, e.g. "UB1-000123"
+  locationId String     @db.Uuid
+  registerId String     @db.Uuid
+  shiftId    String     @db.Uuid
+  cashierId  String     @db.Uuid /// per-staff attribution
+  customerId String?    @db.Uuid
+  origin     SaleOrigin @default(ONLINE)
+  occurredAt DateTime /// when it happened on the device (may precede createdAt if offline)
+
+  /// Totals (all recomputed on the server from catalog + rules; never trusted from the client)
+  netAmount      BigInt /// Σ lines excl. tax, after discounts
+  vatAmount      BigInt
+  cityTaxAmount  BigInt @default(0)
+  discountAmount BigInt @default(0) /// Σ line + cart discounts (informational)
+  itemsAmount    BigInt /// Σ line totals incl. tax
+  tipAmount      BigInt @default(0)
+  roundingAmount BigInt @default(0) /// signed
+  totalAmount    BigInt /// itemsAmount + tipAmount + roundingAmount
+
+  buyerTaxId     String? /// B2B e-receipt buyer
+  note           String?
+  publicToken    String   @unique /// unguessable token for the receipt share link
+  /// Set when an offline sale's client prices differ from the server's view;
+  /// surfaces in a manager review queue instead of being silently rewritten.
+  requiresReview Boolean  @default(false)
+  createdAt      DateTime @default(now()) /// server commit time
+
+  location        Location           @relation(fields: [locationId], references: [id])
+  register        Register           @relation(fields: [registerId], references: [id])
+  shift           Shift              @relation(fields: [shiftId], references: [id])
+  cashier         User               @relation("SaleCashier", fields: [cashierId], references: [id])
+  customer        Customer?          @relation(fields: [customerId], references: [id])
+  lines           SaleLine[]
+  discounts       SaleDiscount[]
+  payments        SalePayment[]
+  void            SaleVoid?
+  refunds         Refund[]           @relation("RefundOriginalSale")
+  exchangeFor     Refund?            @relation("RefundExchangeSale")
+  openTicket      OpenTicket?
+  stockMovements  StockMovement[]
+  loyaltyEntries  LoyaltyEntry[]
+  storeCredit     StoreCreditEntry[]
+  giftCardEntries GiftCardEntry[]
+  fiscalReceipt   FiscalReceipt?
+  deliveries      ReceiptDelivery[]
+  kitchenTickets  KitchenTicket[]
+
+  @@index([locationId, occurredAt])
+  @@index([cashierId, occurredAt])
+  @@index([customerId, occurredAt])
+  @@index([shiftId])
+  @@index([requiresReview])
+}
+
+model SaleLine {
+  id                String        @id @default(uuid(7)) @db.Uuid
+  saleId            String        @db.Uuid
+  lineNo            Int
+  variantId         String        @db.Uuid
+  /// Snapshots — reports and receipts never depend on today's catalog.
+  productId         String        @db.Uuid
+  categoryId        String?       @db.Uuid
+  name              String
+  sku               String?
+  productType       ProductType
+  unit              UnitOfMeasure
+  qtyMilli          Int
+  catalogUnitPrice  BigInt /// catalog price at sale time
+  unitPrice         BigInt /// charged price (≠ catalog ⇒ override)
+  priceOverrideById String?       @db.Uuid /// approver when unitPrice ≠ catalogUnitPrice
+  pricesIncludeTax  Boolean
+  taxTreatment      TaxTreatment
+  vatRateBps        Int
+  cityTaxRateBps    Int           @default(0)
+  /// Amounts
+  grossAmount       BigInt /// (unitPrice + Σ modifier deltas) × qty, in the product's tax mode
+  discountAmount    BigInt        @default(0) /// line + allocated cart discounts, same tax mode
+  netAmount         BigInt /// excl. tax, after discounts
+  vatAmount         BigInt
+  cityTaxAmount     BigInt        @default(0)
+  totalAmount       BigInt /// net + vat + cityTax
+  unitCost          BigInt /// COGS snapshot for margin reports
+  note              String?
+
+  sale            Sale               @relation(fields: [saleId], references: [id])
+  variant         ProductVariant     @relation(fields: [variantId], references: [id])
+  product         Product            @relation(fields: [productId], references: [id])
+  priceOverrideBy User?              @relation("PriceOverrideApprover", fields: [priceOverrideById], references: [id])
+  modifiers       SaleLineModifier[]
+  discounts       SaleDiscount[]
+  refundLines     RefundLine[]
+  giftCard        GiftCard?
+
+  @@unique([saleId, lineNo])
+  @@index([variantId])
+  @@index([productId])
+  @@index([categoryId])
+}
+
+model SaleLineModifier {
+  id         String  @id @default(uuid(7)) @db.Uuid
+  saleLineId String  @db.Uuid
+  modifierId String? @db.Uuid
+  name       String /// snapshot
+  priceDelta BigInt /// snapshot, per unit
+
+  saleLine SaleLine  @relation(fields: [saleLineId], references: [id])
+  modifier Modifier? @relation(fields: [modifierId], references: [id])
+
+  @@index([saleLineId])
+}
+
+/// Every discount applied to a sale, snapshotted. Cart discounts are also
+/// allocated pro-rata into SaleLine.discountAmount (largest-remainder, exact).
+model SaleDiscount {
+  id            String         @id @default(uuid(7)) @db.Uuid
+  saleId        String         @db.Uuid
+  saleLineId    String?        @db.Uuid /// null for CART scope
+  scope         DiscountScope
+  source        DiscountSource
+  discountId    String?        @db.Uuid /// rule, for AUTOMATIC / CODE
+  kind          DiscountKind
+  percentBps    Int?
+  fixedAmount   BigInt?
+  amount        BigInt /// resolved amount actually taken off
+  loyaltyPoints Int? /// points spent, for LOYALTY
+  reason        String?
+  approvedById  String?        @db.Uuid
+
+  sale       Sale      @relation(fields: [saleId], references: [id])
+  saleLine   SaleLine? @relation(fields: [saleLineId], references: [id])
+  discount   Discount? @relation(fields: [discountId], references: [id])
+  approvedBy User?     @relation("DiscountApprover", fields: [approvedById], references: [id])
+
+  @@index([saleId])
+  @@index([discountId])
+}
+
+/// One row per tender (split tender = several rows).
+model SalePayment {
+  id              String        @id @default(uuid(7)) @db.Uuid
+  saleId          String        @db.Uuid
+  method          PaymentMethod
+  amount          BigInt /// applied to the sale (excludes change)
+  tendered        BigInt? /// cash handed over
+  change          BigInt        @default(0) /// cash only
+  reference       String? /// card terminal ref / bank txn ref / QPay payment id
+  cardBrand       String?
+  cardLast4       String?       @db.Char(4)
+  paymentIntentId String?       @unique @db.Uuid
+  giftCardId      String?       @db.Uuid
+  createdAt       DateTime      @default(now())
+
+  sale           Sale            @relation(fields: [saleId], references: [id])
+  paymentIntent  PaymentIntent?  @relation(fields: [paymentIntentId], references: [id])
+  giftCard       GiftCard?       @relation(fields: [giftCardId], references: [id])
+  refundPayments RefundPayment[]
+
+  @@index([saleId])
+  @@index([method, createdAt])
+}
+
+/// Mutable state machine for asynchronous providers (QPay). The webhook only
+/// triggers a server-side status check; it is never trusted on its own.
+model PaymentIntent {
+  id          String              @id @default(uuid(7)) @db.Uuid
+  provider    String /// "qpay" | "mock"
+  saleId      String              @db.Uuid /// client sale id (sale row may not exist yet)
+  amount      BigInt
+  status      PaymentIntentStatus @default(PENDING)
+  providerRef String? /// provider invoice id
+  qrText      String?
+  deeplinks   Json?
+  raw         Json? /// last provider payload, for support
+  expiresAt   DateTime?
+  paidAt      DateTime?
+  createdById String              @db.Uuid
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  createdBy   User         @relation(fields: [createdById], references: [id])
+  salePayment SalePayment?
+
+  @@unique([provider, providerRef])
+  @@index([saleId])
+  @@index([status, createdAt])
+}
+
+/// A void nullifies a sale from the same open shift (otherwise: refund).
+model SaleVoid {
+  id           String     @id @default(uuid(7)) @db.Uuid
+  saleId       String     @unique @db.Uuid
+  shiftId      String     @db.Uuid
+  reason       VoidReason
+  note         String?
+  voidedById   String     @db.Uuid
+  approvedById String?    @db.Uuid
+  createdAt    DateTime   @default(now())
+
+  sale       Sale  @relation(fields: [saleId], references: [id])
+  shift      Shift @relation(fields: [shiftId], references: [id])
+  voidedBy   User  @relation("VoidPerformer", fields: [voidedById], references: [id])
+  approvedBy User? @relation("VoidApprover", fields: [approvedById], references: [id])
+}
+
+// -----------------------------------------------------------------------------
+// Returns / refunds (append-only)
+// -----------------------------------------------------------------------------
+
+model Refund {
+  id             String       @id @db.Uuid /// client-generated (idempotent)
+  number         String       @unique /// "UB1-R-000045"
+  saleId         String       @db.Uuid /// original sale — refunds are always against one
+  locationId     String       @db.Uuid
+  registerId     String       @db.Uuid
+  shiftId        String       @db.Uuid
+  customerId     String?      @db.Uuid
+  processedById  String       @db.Uuid
+  approvedById   String?      @db.Uuid /// manager approval
+  reason         ReturnReason
+  note           String?
+  netAmount      BigInt
+  vatAmount      BigInt
+  cityTaxAmount  BigInt       @default(0)
+  totalAmount    BigInt
+  exchangeSaleId String?      @unique @db.Uuid /// replacement sale when this is an exchange
+  occurredAt     DateTime
+  createdAt      DateTime     @default(now())
+
+  sale            Sale               @relation("RefundOriginalSale", fields: [saleId], references: [id])
+  exchangeSale    Sale?              @relation("RefundExchangeSale", fields: [exchangeSaleId], references: [id])
+  location        Location           @relation(fields: [locationId], references: [id])
+  register        Register           @relation(fields: [registerId], references: [id])
+  shift           Shift              @relation(fields: [shiftId], references: [id])
+  customer        Customer?          @relation(fields: [customerId], references: [id])
+  processedBy     User               @relation("RefundProcessor", fields: [processedById], references: [id])
+  approvedBy      User?              @relation("RefundApprover", fields: [approvedById], references: [id])
+  lines           RefundLine[]
+  payments        RefundPayment[]
+  stockMovements  StockMovement[]
+  loyaltyEntries  LoyaltyEntry[]
+  storeCredit     StoreCreditEntry[]
+  giftCardEntries GiftCardEntry[]
+  fiscalReceipt   FiscalReceipt?
+  deliveries      ReceiptDelivery[]
+
+  @@index([saleId])
+  @@index([locationId, occurredAt])
+  @@index([shiftId])
+}
+
+/// Σ RefundLine.qtyMilli per SaleLine ≤ SaleLine.qtyMilli (enforced in the
+/// refund service under a lock on the original sale).
+model RefundLine {
+  id            String  @id @default(uuid(7)) @db.Uuid
+  refundId      String  @db.Uuid
+  saleLineId    String  @db.Uuid
+  qtyMilli      Int
+  restock       Boolean
+  netAmount     BigInt /// pro-rata of the original line (incl. its discount share)
+  vatAmount     BigInt
+  cityTaxAmount BigInt  @default(0)
+  totalAmount   BigInt
+  unitCost      BigInt
+
+  refund   Refund   @relation(fields: [refundId], references: [id])
+  saleLine SaleLine @relation(fields: [saleLineId], references: [id])
+
+  @@index([refundId])
+  @@index([saleLineId])
+}
+
+model RefundPayment {
+  id                String        @id @default(uuid(7)) @db.Uuid
+  refundId          String        @db.Uuid
+  method            PaymentMethod
+  amount            BigInt
+  originalPaymentId String?       @db.Uuid /// refund-to-original-method link
+  reference         String?
+  giftCardId        String?       @db.Uuid
+  createdAt         DateTime      @default(now())
+
+  refund          Refund       @relation(fields: [refundId], references: [id])
+  originalPayment SalePayment? @relation(fields: [originalPaymentId], references: [id])
+  giftCard        GiftCard?    @relation(fields: [giftCardId], references: [id])
+
+  @@index([refundId])
+  @@index([method, createdAt])
+}
+
+// -----------------------------------------------------------------------------
+// E-receipts (eBarimt adapter) & receipt delivery
+// -----------------------------------------------------------------------------
+
+/// Mutable integration record for the fiscal adapter (mock now).
+/// TODO(ebarimt): map request/response to the real PosAPI once its contract is confirmed.
+model FiscalReceipt {
+  id          String       @id @default(uuid(7)) @db.Uuid
+  provider    String /// "ebarimt" | "mock"
+  saleId      String?      @unique @db.Uuid
+  refundId    String?      @unique @db.Uuid
+  status      FiscalStatus @default(PENDING)
+  externalId  String? /// provider document id
+  lotteryCode String?
+  qrData      String?
+  request     Json?
+  response    Json?
+  error       String?
+  attempts    Int          @default(0)
+  issuedAt    DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  sale   Sale?   @relation(fields: [saleId], references: [id])
+  refund Refund? @relation(fields: [refundId], references: [id])
+
+  @@index([status, createdAt]) // retry queue
+}
+
+model ReceiptDelivery {
+  id          String         @id @default(uuid(7)) @db.Uuid
+  saleId      String?        @db.Uuid
+  refundId    String?        @db.Uuid
+  channel     ReceiptChannel
+  destination String
+  status      DeliveryStatus @default(QUEUED)
+  providerRef String?
+  error       String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  sale   Sale?   @relation(fields: [saleId], references: [id])
+  refund Refund? @relation(fields: [refundId], references: [id])
+
+  @@index([saleId])
+}
+
+// -----------------------------------------------------------------------------
+// Open tickets (held carts, restaurant tabs) & kitchen output
+// -----------------------------------------------------------------------------
+
+model DiningTable {
+  id         String  @id @default(uuid(7)) @db.Uuid
+  locationId String  @db.Uuid
+  name       String
+  area       String?
+  seats      Int?
+  sortOrder  Int     @default(0)
+  isActive   Boolean @default(true)
+
+  location    Location     @relation(fields: [locationId], references: [id])
+  openTickets OpenTicket[]
+
+  @@unique([locationId, name])
+}
+
+/// A parked cart: retail "hold/resume" and restaurant tabs. A draft, not a
+/// financial record — it becomes immutable data only when checked out as a Sale.
+model OpenTicket {
+  id          String       @id @db.Uuid /// client-generated
+  locationId  String       @db.Uuid
+  tableId     String?      @db.Uuid
+  name        String
+  cart        Json /// draft cart (lines, modifiers, discounts, customer)
+  version     Int          @default(0) /// optimistic concurrency between registers
+  status      TicketStatus @default(OPEN)
+  saleId      String?      @unique @db.Uuid
+  createdById String       @db.Uuid
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  location       Location        @relation(fields: [locationId], references: [id])
+  table          DiningTable?    @relation(fields: [tableId], references: [id])
+  sale           Sale?           @relation(fields: [saleId], references: [id])
+  createdBy      User            @relation(fields: [createdById], references: [id])
+  kitchenTickets KitchenTicket[]
+
+  @@index([locationId, status])
+}
+
+model KitchenTicket {
+  id           String    @id @default(uuid(7)) @db.Uuid
+  locationId   String    @db.Uuid
+  openTicketId String?   @db.Uuid
+  saleId       String?   @db.Uuid
+  number       Int
+  items        Json /// snapshot of the items fired to the kitchen
+  createdAt    DateTime  @default(now())
+  printedAt    DateTime?
+
+  location   Location    @relation(fields: [locationId], references: [id])
+  openTicket OpenTicket? @relation(fields: [openTicketId], references: [id])
+  sale       Sale?       @relation(fields: [saleId], references: [id])
+
+  @@index([locationId, createdAt])
+}
+
+// -----------------------------------------------------------------------------
+// Infrastructure
+// -----------------------------------------------------------------------------
+
+/// Gap-free document counters, incremented with UPDATE … RETURNING inside the
+/// owning transaction. Keys: "sale:<locationCode>", "refund:<locationCode>",
+/// "po", "gr", "stocktake", "zreport:<registerId>", "kitchen:<locationId>".
+model Sequence {
+  key   String @id
+  value Int    @default(0)
+}
+
+/// Append-only. Who did what, when.
+model AuditLog {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  actorId    String?  @db.Uuid /// null = system
+  action     String /// e.g. "sale.void", "product.price_change", "refund.approve"
+  entityType String
+  entityId   String?
+  locationId String?  @db.Uuid
+  registerId String?  @db.Uuid
+  before     Json?
+  after      Json?
+  meta       Json?
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+  @@index([createdAt])
+}
