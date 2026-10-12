@@ -1,6 +1,5 @@
 "use server";
 
-import { AuthError } from "next-auth";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
@@ -8,16 +7,10 @@ import { APPROVABLE_PERMISSIONS } from "@/domain/permissions";
 import { isLocale, LOCALE_COOKIE } from "@/i18n/config";
 import { grantApproval } from "../auth/approval";
 import { readDeviceToken } from "../auth/device";
-import { signIn, signOut } from "../auth/index";
-import { pinLookup } from "../auth/pin";
+import { auth, CredentialsSignin, SIGN_IN_CODES, signInVerified, signOut } from "../auth/index";
+import { safeNextPath } from "../auth/next-path";
 import { db } from "../db";
 import { ActionError, defineAction, definePublicAction } from "./define-action";
-
-/** Only same-origin relative paths are allowed as post-login targets (no open redirects). */
-function safeNextPath(next: string | undefined): string {
-  if (!next || !next.startsWith("/") || next.startsWith("//") || next.includes("\\")) return "/";
-  return next;
-}
 
 /** Carry the user's saved language preference into the locale cookie. */
 async function applyPreferredLocale(locale: string | null | undefined) {
@@ -30,13 +23,29 @@ async function applyPreferredLocale(locale: string | null | undefined) {
   }
 }
 
-/** Map Auth.js credential failures to our codes; rethrow anything else. */
-function credentialsFailure(error: unknown): never {
-  if (error instanceof AuthError) {
-    const code = (error as AuthError & { code?: string }).code;
-    throw new ActionError(code === "device" ? "DEVICE_REQUIRED" : "INVALID_CREDENTIALS");
+/**
+ * Sign in and return the user our own authorize() verified. Known credential
+ * failures become typed action errors; anything else (database down, …)
+ * propagates and is reported as INTERNAL — never as "wrong password".
+ */
+async function verifiedSignIn(provider: "password" | "pin", fields: Record<string, string>) {
+  let user;
+  try {
+    user = await signInVerified(provider, fields);
+  } catch (error) {
+    if (!(error instanceof CredentialsSignin)) throw error;
+    switch (error.code) {
+      case SIGN_IN_CODES.device:
+        throw new ActionError("DEVICE_REQUIRED");
+      case SIGN_IN_CODES.locked:
+      case SIGN_IN_CODES.rateLimited:
+        throw new ActionError("RATE_LIMITED");
+      default:
+        throw new ActionError("INVALID_CREDENTIALS");
+    }
   }
-  throw error;
+  if (!user) throw new ActionError("INVALID_CREDENTIALS");
+  return user;
 }
 
 export const loginWithPassword = definePublicAction({
@@ -47,16 +56,8 @@ export const loginWithPassword = definePublicAction({
     next: z.string().max(512).optional(),
   }),
   async run({ input }) {
-    try {
-      await signIn("password", { email: input.email, password: input.password, redirect: false });
-    } catch (error) {
-      credentialsFailure(error);
-    }
-    const user = await db.user.findUnique({
-      where: { email: input.email.trim().toLowerCase() },
-      select: { locale: true },
-    });
-    await applyPreferredLocale(user?.locale);
+    const user = await verifiedSignIn("password", { email: input.email, password: input.password });
+    await applyPreferredLocale(user.locale);
     // "/" routes each role to its home screen.
     redirect(safeNextPath(input.next));
   },
@@ -66,28 +67,34 @@ export const loginWithPin = definePublicAction({
   name: "auth.loginWithPin",
   input: z.object({ pin: z.string().regex(/^\d{4,8}$/) }),
   async run({ input }) {
-    try {
-      await signIn("pin", { pin: input.pin, redirect: false });
-    } catch (error) {
-      credentialsFailure(error);
-    }
-    const user = await db.user.findUnique({
-      where: { pinLookup: pinLookup(input.pin) },
-      select: { locale: true },
-    });
-    await applyPreferredLocale(user?.locale);
+    const user = await verifiedSignIn("pin", { pin: input.pin });
+    await applyPreferredLocale(user.locale);
     redirect("/");
   },
 });
 
-export const logout = defineAction({
+/**
+ * Sign out (or "lock" / "switch user" on a register). Public on purpose: it
+ * must work even when the session has already become invalid, so a stale
+ * screen can always be left. The session id is revoked server-side, so a
+ * copied session cookie stops working too.
+ */
+export const logout = definePublicAction({
   name: "auth.logout",
-  access: "authenticated",
   input: z.object({}),
   async run({ user }) {
+    const session = await auth();
+    if (session?.sid) {
+      const expiresAt = new Date(session.expires);
+      await db.revokedSession.upsert({
+        where: { sid: session.sid },
+        update: {},
+        create: { sid: session.sid, expiresAt },
+      });
+    }
     await signOut({ redirect: false });
     // On a paired register, go straight back to the PIN pad.
-    const paired = user.deviceId !== null || (await readDeviceToken()) !== null;
+    const paired = (user?.deviceId ?? null) !== null || (await readDeviceToken()) !== null;
     redirect(paired ? "/pin" : "/login");
   },
 });
@@ -118,8 +125,15 @@ export const requestApproval = defineAction({
       meta,
     );
     if (result.ok) return { token: result.token, approverName: result.approverName };
-    if (result.reason === "DEVICE_REQUIRED") throw new ActionError("DEVICE_REQUIRED");
-    if (result.reason === "NOT_PERMITTED") throw new ActionError("FORBIDDEN");
-    throw new ActionError("INVALID_CREDENTIALS");
+    switch (result.reason) {
+      case "DEVICE_REQUIRED":
+        throw new ActionError("DEVICE_REQUIRED");
+      case "LOCKED":
+        throw new ActionError("RATE_LIMITED");
+      case "NOT_PERMITTED":
+        throw new ActionError("FORBIDDEN");
+      default:
+        throw new ActionError("INVALID_CREDENTIALS");
+    }
   },
 });

@@ -28,7 +28,7 @@
 generator client {
   provider        = "prisma-client"
   output          = "../src/generated/prisma"
-  previewFeatures = ["postgresqlExtensions"]
+  previewFeatures = ["postgresqlExtensions", "partialIndexes"]
 }
 
 datasource db {
@@ -299,23 +299,19 @@ model Location {
 }
 
 model Register {
-  id          String   @id @default(uuid(7)) @db.Uuid
-  locationId  String   @db.Uuid
-  code        String /// e.g. "R1"; unique per location
-  name        String
-  /// The currently open shift. A single nullable unique pointer enforces
-  /// "at most one open shift per register" without a partial index.
-  openShiftId String?  @unique @db.Uuid
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
+  id         String   @id @default(uuid(7)) @db.Uuid
+  locationId String   @db.Uuid
+  code       String /// e.g. "R1"; unique per location
+  name       String
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
 
-  location  Location  @relation(fields: [locationId], references: [id])
-  openShift Shift?    @relation("RegisterOpenShift", fields: [openShiftId], references: [id])
-  shifts    Shift[]   @relation("RegisterShifts")
-  devices   Device[]
-  sales     Sale[]
-  refunds   Refund[]
-  zReports  ZReport[]
+  location Location  @relation(fields: [locationId], references: [id])
+  shifts   Shift[]
+  devices  Device[]
+  sales    Sale[]
+  refunds  Refund[]
+  zReports ZReport[]
 
   @@unique([locationId, code])
 }
@@ -332,9 +328,6 @@ model Device {
   pairedAt   DateTime  @default(now())
   lastSeenAt DateTime?
   revokedAt  DateTime?
-  /// PIN brute-force protection, per device (a PIN alone identifies a user).
-  failedPinAttempts Int       @default(0)
-  pinLockedUntil    DateTime?
 
   location Location  @relation(fields: [locationId], references: [id])
   register Register? @relation(fields: [registerId], references: [id])
@@ -360,8 +353,6 @@ model User {
   isActive     Boolean   @default(true)
   /// Bumped on role change / deactivation / password reset to invalidate JWTs.
   tokenVersion Int       @default(0)
-  failedLogins Int       @default(0)
-  lockedUntil  DateTime?
   lastLoginAt  DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
@@ -391,6 +382,7 @@ model User {
   storeCreditEntries     StoreCreditEntry[]
   paymentIntents         PaymentIntent[]
   openTickets            OpenTicket[]
+  saleReviews            SaleReview[]
   auditLogs              AuditLog[]
 }
 
@@ -672,8 +664,8 @@ model GoodsReceipt {
   receivedById    String   @db.Uuid
   receivedAt      DateTime @default(now())
 
-  purchaseOrder PurchaseOrder?     @relation(fields: [purchaseOrderId], references: [id])
-  supplier      Supplier?          @relation(fields: [supplierId], references: [id])
+  purchaseOrder PurchaseOrder?     @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+  supplier      Supplier?          @relation(fields: [supplierId], references: [id], onDelete: Restrict)
   location      Location           @relation(fields: [locationId], references: [id])
   receivedBy    User               @relation(fields: [receivedById], references: [id])
   lines         GoodsReceiptLine[]
@@ -692,7 +684,7 @@ model GoodsReceiptLine {
   unitCost            BigInt
 
   goodsReceipt      GoodsReceipt       @relation(fields: [goodsReceiptId], references: [id], onDelete: Cascade)
-  purchaseOrderLine PurchaseOrderLine? @relation(fields: [purchaseOrderLineId], references: [id])
+  purchaseOrderLine PurchaseOrderLine? @relation(fields: [purchaseOrderLineId], references: [id], onDelete: Restrict)
   variant           ProductVariant     @relation(fields: [variantId], references: [id])
 
   @@index([goodsReceiptId])
@@ -985,8 +977,7 @@ model Shift {
   denominations Json?
   closingNote   String?
 
-  register      Register       @relation("RegisterShifts", fields: [registerId], references: [id])
-  openOn        Register?      @relation("RegisterOpenShift")
+  register      Register       @relation(fields: [registerId], references: [id])
   location      Location       @relation(fields: [locationId], references: [id])
   openedBy      User           @relation("ShiftOpenedBy", fields: [openedById], references: [id])
   closedBy      User?          @relation("ShiftClosedBy", fields: [closedById], references: [id])
@@ -996,6 +987,8 @@ model Shift {
   refunds       Refund[]
   zReport       ZReport?
 
+  /// At most one OPEN shift per register, enforced by the database.
+  @@unique([registerId], map: "Shift_one_open_per_register", where: raw("status = 'OPEN'"))
   @@index([registerId, openedAt])
   @@index([locationId, openedAt])
 }
@@ -1063,8 +1056,8 @@ model Sale {
   buyerTaxId     String? /// B2B e-receipt buyer
   note           String?
   publicToken    String   @unique /// unguessable token for the receipt share link
-  /// Set when an offline sale's client prices differ from the server's view;
-  /// surfaces in a manager review queue instead of being silently rewritten.
+  /// Immutable fact: an offline sale whose client prices differed from the
+  /// server's view. The review queue is `requiresReview AND no SaleReview`.
   requiresReview Boolean  @default(false)
   createdAt      DateTime @default(now()) /// server commit time
 
@@ -1077,6 +1070,7 @@ model Sale {
   discounts       SaleDiscount[]
   payments        SalePayment[]
   void            SaleVoid?
+  review          SaleReview?
   refunds         Refund[]           @relation("RefundOriginalSale")
   exchangeFor     Refund?            @relation("RefundExchangeSale")
   openTicket      OpenTicket?
@@ -1092,7 +1086,7 @@ model Sale {
   @@index([cashierId, occurredAt])
   @@index([customerId, occurredAt])
   @@index([shiftId])
-  @@index([requiresReview])
+  @@index([createdAt], map: "Sale_review_queue_idx", where: raw("\"requiresReview\""))
 }
 
 model SaleLine {
@@ -1246,6 +1240,17 @@ model SaleVoid {
   approvedBy User? @relation("VoidApprover", fields: [approvedById], references: [id])
 }
 
+/// Append-only. A manager's decision on a sale flagged `requiresReview`.
+model SaleReview {
+  saleId       String   @id @db.Uuid
+  reviewedById String   @db.Uuid
+  note         String?
+  reviewedAt   DateTime @default(now())
+
+  sale       Sale @relation(fields: [saleId], references: [id])
+  reviewedBy User @relation(fields: [reviewedById], references: [id])
+}
+
 // -----------------------------------------------------------------------------
 // Returns / refunds (append-only)
 // -----------------------------------------------------------------------------
@@ -1265,7 +1270,9 @@ model Refund {
   netAmount      BigInt
   vatAmount      BigInt
   cityTaxAmount  BigInt       @default(0)
-  totalAmount    BigInt
+  tipAmount      BigInt       @default(0) /// tip returned with the refund
+  roundingAmount BigInt       @default(0) /// signed; refunds round like sales
+  totalAmount    BigInt /// net + vat + cityTax + tip + rounding
   exchangeSaleId String?      @unique @db.Uuid /// replacement sale when this is an exchange
   occurredAt     DateTime
   createdAt      DateTime     @default(now())
@@ -1448,6 +1455,26 @@ model KitchenTicket {
 model Sequence {
   key   String @id
   value Int    @default(0)
+}
+
+/// Brute-force throttling buckets for sign-in and PIN entry. Keys:
+///   "pw:ip:<ip>", "pw:acct:<userId>", "pw:acct-ip:<userId>:<ip>", "pin:dev:<deviceId>".
+/// Failures older than the rule's window are forgotten (no slow-drip escalation).
+model AuthThrottle {
+  key           String    @id
+  failures      Int       @default(0)
+  lastFailureAt DateTime
+  lockedUntil   DateTime?
+
+  @@index([lastFailureAt])
+}
+
+/// Sessions ended by sign-out before their JWT expiry; checked on every request.
+model RevokedSession {
+  sid       String   @id @db.Uuid
+  expiresAt DateTime
+
+  @@index([expiresAt])
 }
 
 /// Append-only. Who did what, when.

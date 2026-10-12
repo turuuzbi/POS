@@ -12,7 +12,8 @@ import { PinPad } from "./pin-pad";
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations("auth");
-  return { title: t("pinTitle") };
+  const device = await findActiveDevice(db, await readDeviceToken());
+  return { title: device ? t("pinTitle") : t("notPairedTitle") };
 }
 
 export default async function PinPage() {
@@ -35,6 +36,7 @@ export default async function PinPage() {
           </Button>
         }
         className="w-full max-w-md bg-background"
+        headingLevel={1}
       />
     );
   }

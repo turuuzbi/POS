@@ -30,8 +30,9 @@ export function NavLinks({ items, onNavigate }: { items: NavKey[]; onNavigate?: 
               onClick={onNavigate}
               aria-current={active ? "page" : undefined}
               className={cn(
-                "flex min-h-11 items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground",
-                active && "bg-accent text-accent-foreground",
+                "relative flex min-h-11 items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground",
+                active &&
+                  "bg-accent font-semibold text-accent-foreground before:absolute before:inset-y-2 before:start-0 before:w-1 before:rounded-full before:bg-ring",
               )}
             >
               <Icon className="size-5" aria-hidden />

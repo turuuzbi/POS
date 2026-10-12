@@ -29,6 +29,9 @@ export default defineConfig({
           include: ["tests/integration/**/*.test.ts"],
           environment: "node",
           globalSetup: ["tests/support/integration-global-setup.ts"],
+          // next-auth imports "next/server" without an extension; let Vite
+          // resolve it (as Next's bundler does) instead of Node's strict ESM.
+          server: { deps: { inline: ["next-auth", "@auth/core"] } },
           setupFiles: ["tests/support/integration-env.ts"],
           // One shared database: run files serially, tests isolate via truncation.
           fileParallelism: false,

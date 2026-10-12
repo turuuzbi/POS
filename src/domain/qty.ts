@@ -9,7 +9,7 @@ export type QtyMilli = number;
 
 export const MILLI_PER_UNIT = 1000;
 const MILLI_BIG = 1000n;
-/** Upper bound that fits the Int4 database columns with headroom. */
+/** Upper bound for a single line/movement quantity (fits Int4 with headroom). */
 export const MAX_QTY_MILLI = 1_000_000_000; // 1 000 000 units
 
 export const UNITS = ["PIECE", "KG", "LITER", "METER"] as const;

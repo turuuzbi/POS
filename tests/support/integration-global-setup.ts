@@ -14,6 +14,7 @@ export default function setup() {
   }
   execFileSync("pnpm", ["exec", "prisma", "migrate", "deploy"], {
     stdio: "inherit",
-    env: { ...process.env, DATABASE_URL: url },
+    // Both: prisma.config.ts prefers DIRECT_DATABASE_URL for migrations.
+    env: { ...process.env, DATABASE_URL: url, DIRECT_DATABASE_URL: url },
   });
 }

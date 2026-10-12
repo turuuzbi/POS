@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { defineConfig, devices } from "@playwright/test";
 
 const PORT = Number(process.env.E2E_PORT ?? 3100);
@@ -5,12 +6,16 @@ const baseURL = process.env.E2E_BASE_URL ?? `http://localhost:${PORT}`;
 
 /**
  * E2E runs against a production build (`next start`) and a seeded database.
- * Locally that's your dev database (`pnpm db:seed` first); CI provisions a
- * fresh one. PLAYWRIGHT_CHROMIUM_EXECUTABLE lets a pre-installed Chromium be
- * used when the bundled revision isn't downloaded.
+ * Locally that's your dev database (`pnpm db:seed` first) and the build is
+ * made fresh unless a server is already running; CI builds in an earlier
+ * step. global-setup.ts resets the state the tests depend on (seed users'
+ * language, lockouts, devices paired by earlier runs).
+ * PLAYWRIGHT_CHROMIUM_EXECUTABLE lets a pre-installed Chromium be used when
+ * the bundled revision isn't downloaded.
  */
 export default defineConfig({
   testDir: "tests/e2e",
+  globalSetup: "./tests/e2e/global-setup.ts",
   fullyParallel: false,
   workers: 1,
   forbidOnly: !!process.env.CI,
@@ -39,9 +44,11 @@ export default defineConfig({
   webServer: process.env.E2E_BASE_URL
     ? undefined
     : {
-        command: `pnpm start --port ${PORT}`,
+        command: process.env.CI
+          ? `pnpm start --port ${PORT}`
+          : `pnpm build && pnpm start --port ${PORT}`,
         url: `${baseURL}/login`,
         reuseExistingServer: !process.env.CI,
-        timeout: 120_000,
+        timeout: 300_000,
       },
 });

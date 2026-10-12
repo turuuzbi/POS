@@ -10,10 +10,10 @@ const RETRY = "Дахин оролдох · Try again";
  * the i18n provider, so it shows both languages side by side.
  */
 export default function GlobalError({
-  reset,
+  retry,
 }: {
   error: Error & { digest?: string };
-  reset: () => void;
+  retry: () => void;
 }) {
   return (
     <html lang="mn">
@@ -30,7 +30,7 @@ export default function GlobalError({
           <h1 style={{ fontSize: 20 }}>{TITLE}</h1>
           <button
             type="button"
-            onClick={reset}
+            onClick={retry}
             style={{
               marginTop: 16,
               minHeight: 44,

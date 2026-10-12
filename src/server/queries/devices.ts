@@ -1,6 +1,7 @@
 import "server-only";
 import type { CurrentUser } from "../auth/session";
 import { findActiveDevice, readDeviceToken } from "../auth/device";
+import { lockedDeviceIds } from "../auth/throttle";
 import { db } from "../db";
 
 function locationScope(user: CurrentUser) {
@@ -24,9 +25,9 @@ export function listPairableLocations(user: CurrentUser) {
   });
 }
 
-/** Devices at the user's locations, newest first. */
-export function listDevices(user: CurrentUser) {
-  return db.device.findMany({
+/** Devices at the user's locations, newest first, with their PIN-lock state. */
+export async function listDevices(user: CurrentUser) {
+  const devices = await db.device.findMany({
     where: { location: locationScope(user) },
     orderBy: [{ revokedAt: { sort: "asc", nulls: "first" } }, { pairedAt: "desc" }],
     take: 200,
@@ -40,6 +41,12 @@ export function listDevices(user: CurrentUser) {
       register: { select: { name: true } },
     },
   });
+  const locked = await lockedDeviceIds(
+    db,
+    devices.filter((d) => !d.revokedAt).map((d) => d.id),
+    new Date(),
+  );
+  return devices.map((device) => ({ ...device, pinLocked: locked.has(device.id) }));
 }
 
 /** The device this browser is paired as, if any. */

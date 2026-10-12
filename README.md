@@ -23,13 +23,16 @@ The schema is in [`prisma/schema.prisma`](prisma/schema.prisma).
 Requirements: Node 22+, pnpm 10, PostgreSQL 16.
 
 ```bash
-pnpm install                       # also generates the Prisma client
 cp .env.example .env               # then fill the three secrets: openssl rand -base64 32
+pnpm install                       # also generates the Prisma client
 createdb pos_dev && createdb pos_test
 pnpm db:deploy                     # apply migrations to pos_dev
-pnpm db:seed                       # demo shop, staff and catalog (idempotent)
+pnpm db:seed                       # demo shop, staff, catalog, opening stock (idempotent)
 pnpm dev                           # http://localhost:3000
 ```
+
+On Neon, `DATABASE_URL` is the pooled connection string (host contains `-pooler`), which the app uses.
+`DIRECT_DATABASE_URL` is the direct one, which Prisma Migrate uses.
 
 ### Demo accounts (seed data, development only)
 
@@ -45,25 +48,28 @@ to the PIN pad.
 
 ## Scripts
 
-| Command                                  | What it does                                                                           |
-| ---------------------------------------- | -------------------------------------------------------------------------------------- |
-| `pnpm dev` / `pnpm build` / `pnpm start` | Next.js                                                                                |
-| `pnpm typecheck`                         | Route typegen + `tsc --noEmit`                                                         |
-| `pnpm lint`                              | ESLint (zero warnings; flags hardcoded UI strings)                                     |
-| `pnpm format` / `pnpm format:check`      | Prettier                                                                               |
-| `pnpm test:unit`                         | Pure logic: money, quantities, scale barcodes, permissions, tokens, i18n parity        |
-| `pnpm test:integration`                  | Against `pos_test`: auth, lockouts, approvals, append-only triggers, CHECK constraints |
-| `pnpm test:e2e`                          | Playwright against a production build and the seeded dev database                      |
-| `pnpm db:migrate`                        | Create and apply a migration (development)                                             |
-| `pnpm db:deploy`                         | Apply pending migrations (CI and production)                                           |
-| `pnpm db:seed`                           | Idempotent demo data                                                                   |
-| `pnpm check`                             | typecheck, lint, all Vitest tests, build                                               |
+| Command                                  | What it does                                                                                                                 |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm dev` / `pnpm build` / `pnpm start` | Next.js                                                                                                                      |
+| `pnpm typecheck`                         | Route typegen + `tsc --noEmit`                                                                                               |
+| `pnpm lint`                              | ESLint (zero warnings; flags hardcoded UI strings)                                                                           |
+| `pnpm format` / `pnpm format:check`      | Prettier                                                                                                                     |
+| `pnpm test:unit`                         | Pure logic: money, quantities, scale barcodes, permissions, tokens, i18n parity                                              |
+| `pnpm test:integration`                  | Against `pos_test`: Auth.js sign-in flow, session revocation, throttling, approvals, append-only triggers, CHECK constraints |
+| `pnpm test:e2e`                          | Playwright against a production build and the seeded dev database                                                            |
+| `pnpm db:migrate`                        | Create and apply a migration (development)                                                                                   |
+| `pnpm db:deploy`                         | Apply pending migrations (CI and production)                                                                                 |
+| `pnpm db:seed`                           | Idempotent demo data                                                                                                         |
+| `pnpm check`                             | typecheck, lint, all Vitest tests, build                                                                                     |
 
 Integration tests refuse to run unless the database name ends in `_test`.
 They use `TEST_DATABASE_URL`, or `DATABASE_URL` with `_dev` replaced by `_test`.
 
-If Playwright's bundled Chromium isn't downloaded, point it at an installed one:
-`PLAYWRIGHT_CHROMIUM_EXECUTABLE=/path/to/chrome pnpm test:e2e`.
+E2E needs a browser once: `pnpm exec playwright install chromium`. Alternatively, point it at an installed
+one with `PLAYWRIGHT_CHROMIUM_EXECUTABLE=/path/to/chrome`. Locally, `pnpm test:e2e` builds the app
+first unless a server is already running on the port. It runs against your seeded dev database
+and resets only what the tests depend on: seed users' language, lockouts, and devices paired by
+earlier runs.
 
 ## Ground rules
 

@@ -18,42 +18,52 @@ import { Button } from "@/components/ui/button";
 import { useAction } from "@/hooks/use-action";
 import { revokeDevice } from "@/server/actions/devices";
 
+/** Element that receives focus after the dialog closes (the row may disappear). */
+export const DEVICE_LIST_HEADING_ID = "device-list";
+
 export function RevokeDeviceButton({
   deviceId,
-  name,
   label,
+  confirm,
+  successMessage,
 }: {
   deviceId: string;
-  name: string;
   label: string;
+  confirm: string;
+  successMessage: string;
 }) {
-  const t = useTranslations();
+  const t = useTranslations("common");
   const router = useRouter();
   const { run, pending } = useAction(revokeDevice);
 
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <Button variant="outline" size="sm" disabled={pending}>
-          {label}
-        </Button>
+        <Button variant="outline">{label}</Button>
       </AlertDialogTrigger>
-      <AlertDialogContent>
+      <AlertDialogContent
+        onCloseAutoFocus={(event) => {
+          // The trigger is about to be removed by the refresh: keep focus on the list.
+          event.preventDefault();
+          document.getElementById(DEVICE_LIST_HEADING_ID)?.focus();
+        }}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>{label}</AlertDialogTitle>
-          <AlertDialogDescription>{t("devices.revokeConfirm", { name })}</AlertDialogDescription>
+          <AlertDialogDescription>{confirm}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+          <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
           <AlertDialogAction
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            disabled={pending}
             onClick={() =>
               run(
                 { deviceId },
                 {
                   toastOnError: true,
                   onSuccess: () => {
-                    toast.success(t("devices.revoked"));
+                    toast.success(successMessage);
                     router.refresh();
                   },
                 },

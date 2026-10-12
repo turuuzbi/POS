@@ -65,6 +65,21 @@ describe("parseScaleBarcode", () => {
     expect(parseScaleBarcode(zero)).toBeNull();
   });
 
+  it("rejects weights beyond the per-line maximum", () => {
+    const wide: ScaleBarcodeRule = {
+      prefix: "2",
+      itemCodeLength: 4,
+      valueType: "WEIGHT",
+      valueLength: 7,
+      valueDecimals: 0,
+    };
+    // 5 000 000 kg would be 5e9 milli — beyond MAX_QTY_MILLI and the Int4 columns.
+    expect(parseScaleBarcode(buildScaleBarcode(wide, "1", 5_000_000), [wide])).toBeNull();
+    expect(parseScaleBarcode(buildScaleBarcode(wide, "1", 12), [wide])).toMatchObject({
+      qtyMilli: 12_000,
+    });
+  });
+
   it("prefers the longest matching prefix", () => {
     const general: ScaleBarcodeRule = { ...weightRule, prefix: "2", itemCodeLength: 6 };
     const code = buildScaleBarcode(priceRule, "45", 500);

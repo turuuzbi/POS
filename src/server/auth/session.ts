@@ -21,17 +21,24 @@ export interface CurrentUser {
 
 /**
  * The authenticated user for this request, re-validated against the
- * database (active + tokenVersion), or null. Memoised per request.
+ * database (active, tokenVersion, not signed out, device binding), or null.
+ * Memoised per request.
  */
 export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   const session = await auth();
   const id = session?.user?.id;
-  if (!id) return null;
-  const user = await db.user.findUnique({
-    where: { id },
-    include: { locations: { select: { locationId: true } } },
-  });
-  if (!user || !user.isActive || user.tokenVersion !== session.tokenVersion) return null;
+  const sid = session?.sid;
+  if (!id || !sid) return null;
+  const [user, revoked] = await Promise.all([
+    db.user.findUnique({
+      where: { id },
+      include: { locations: { select: { locationId: true } } },
+    }),
+    db.revokedSession.findUnique({ where: { sid }, select: { sid: true } }),
+  ]);
+  if (!user || !user.isActive || revoked || user.tokenVersion !== session.tokenVersion) {
+    return null;
+  }
 
   // A PIN session is bound to its paired device: it dies when the device is
   // revoked, and a copied session cookie is useless without the device cookie.

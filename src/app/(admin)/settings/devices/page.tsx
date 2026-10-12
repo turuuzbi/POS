@@ -16,7 +16,8 @@ import {
 import { requirePermission } from "@/server/auth/session";
 import { currentDevice, listDevices, listPairableLocations } from "@/server/queries/devices";
 import { PairDeviceForm } from "./pair-device-form";
-import { RevokeDeviceButton } from "./revoke-device-button";
+import { DEVICE_LIST_HEADING_ID, RevokeDeviceButton } from "./revoke-device-button";
+import { UnlockPinButton } from "./unlock-pin-button";
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations("devices");
@@ -57,8 +58,9 @@ export default async function DevicesPage() {
             <CardContent>
               <RevokeDeviceButton
                 deviceId={thisDevice.id}
-                name={thisDevice.name}
                 label={t("unpair")}
+                confirm={t("unpairConfirm")}
+                successMessage={t("unpaired")}
               />
             </CardContent>
           ) : null}
@@ -74,8 +76,12 @@ export default async function DevicesPage() {
         </Card>
       </div>
 
-      <section aria-labelledby="device-list" className="space-y-3">
-        <h2 id="device-list" className="text-lg font-semibold">
+      <section aria-labelledby={DEVICE_LIST_HEADING_ID} className="space-y-3">
+        <h2
+          id={DEVICE_LIST_HEADING_ID}
+          tabIndex={-1}
+          className="text-lg font-semibold focus-visible:outline-none"
+        >
           {t("listTitle")}
         </h2>
         {devices.length === 0 ? (
@@ -98,7 +104,7 @@ export default async function DevicesPage() {
                   <TableRow key={device.id}>
                     <TableCell className="font-medium">{device.name}</TableCell>
                     <TableCell>{device.location.name}</TableCell>
-                    <TableCell>{device.register?.name ?? t("noRegister")}</TableCell>
+                    <TableCell>{device.register?.name ?? t("registerNone")}</TableCell>
                     <TableCell>
                       {device.lastSeenAt
                         ? format.dateTime(device.lastSeenAt, {
@@ -108,19 +114,28 @@ export default async function DevicesPage() {
                         : t("never")}
                     </TableCell>
                     <TableCell>
-                      {device.revokedAt ? (
-                        <Badge variant="secondary">{t("statusRevoked")}</Badge>
-                      ) : (
-                        <Badge variant="success">{t("statusActive")}</Badge>
-                      )}
+                      <div className="flex flex-wrap gap-1">
+                        {device.revokedAt ? (
+                          <Badge variant="secondary">{t("statusRevoked")}</Badge>
+                        ) : (
+                          <Badge variant="success">{t("statusActive")}</Badge>
+                        )}
+                        {device.pinLocked ? (
+                          <Badge variant="destructive">{t("statusPinLocked")}</Badge>
+                        ) : null}
+                      </div>
                     </TableCell>
                     <TableCell className="text-right">
                       {device.revokedAt ? null : (
-                        <RevokeDeviceButton
-                          deviceId={device.id}
-                          name={device.name}
-                          label={t("revoke")}
-                        />
+                        <div className="flex justify-end gap-2">
+                          {device.pinLocked ? <UnlockPinButton deviceId={device.id} /> : null}
+                          <RevokeDeviceButton
+                            deviceId={device.id}
+                            label={t("revoke")}
+                            confirm={t("revokeConfirm", { name: device.name })}
+                            successMessage={t("revoked")}
+                          />
+                        </div>
                       )}
                     </TableCell>
                   </TableRow>

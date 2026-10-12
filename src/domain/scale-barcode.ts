@@ -12,7 +12,7 @@
  */
 import { z } from "zod";
 import { MINOR_PER_MAJOR, type Money } from "./money";
-import type { QtyMilli } from "./qty";
+import { MAX_QTY_MILLI, type QtyMilli } from "./qty";
 
 export const EAN13_LENGTH = 13;
 
@@ -71,7 +71,7 @@ export function normalizePlu(code: string): string {
 
 /**
  * Parse a scanned code against the rules. Returns null when the code is not a
- * valid EAN-13, matches no rule, or encodes a zero quantity/price.
+ * valid EAN-13, matches no rule, or encodes a zero or out-of-range quantity.
  * The longest matching prefix wins.
  */
 export function parseScaleBarcode(
@@ -95,6 +95,7 @@ export function parseScaleBarcode(
   if (rule.valueType === "WEIGHT") {
     // value has `valueDecimals` decimals of kg → milli-kg (grams)
     const qtyMilli = Number(rawValue) * 10 ** (3 - rule.valueDecimals);
+    if (!Number.isSafeInteger(qtyMilli) || qtyMilli > MAX_QTY_MILLI) return null;
     return { pluCode, kind: "WEIGHT", qtyMilli };
   }
   // value has `valueDecimals` decimals of ₮ → möngö

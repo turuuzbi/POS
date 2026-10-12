@@ -13,8 +13,11 @@ const MIN_DIGITS = 4;
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"] as const;
 
 /**
- * Touch PIN pad backed by a real (masked) input, so a hardware keyboard,
- * screen readers and password managers all keep working.
+ * Touch PIN pad backed by a real input, so hardware keyboards and screen
+ * readers work. Deliberately NOT type="password": on a shared register the
+ * browser's password manager would save one cashier's PIN and offer it to
+ * the next person. Digits are masked with CSS instead, and
+ * inputMode="none" keeps the OS keyboard from covering the on-screen pad.
  */
 export function PinPad() {
   const t = useTranslations("auth");
@@ -31,9 +34,16 @@ export function PinPad() {
   };
   const submit = () => {
     if (pin.length < MIN_DIGITS || pending) return;
-    run({ pin }, { onSuccess: () => setPin("") });
+    run({ pin });
     setPin("");
   };
+
+  const message =
+    error?.code === "INVALID_CREDENTIALS" || error?.code === "VALIDATION"
+      ? t("pinInvalid")
+      : error?.code === "RATE_LIMITED"
+        ? t("pinLocked")
+        : errorMessage;
 
   return (
     <form
@@ -49,10 +59,17 @@ export function PinPad() {
       <input
         ref={inputRef}
         id={inputId}
-        type="password"
-        inputMode="numeric"
+        name="pin-entry"
+        type="text"
+        inputMode="none"
         pattern="[0-9]*"
         autoComplete="off"
+        autoCorrect="off"
+        spellCheck={false}
+        data-1p-ignore
+        data-lpignore="true"
+        data-bwignore
+        data-form-type="other"
         autoFocus
         maxLength={MAX_DIGITS}
         value={pin}
@@ -60,8 +77,8 @@ export function PinPad() {
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? errorId : undefined}
         className={cn(
-          "h-14 w-full rounded-lg border bg-background text-center font-mono text-3xl tracking-[0.5em] outline-none",
-          "focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50",
+          "h-14 w-full rounded-lg border border-input-border bg-background text-center font-mono text-3xl tracking-[0.5em] outline-none [-webkit-text-security:disc]",
+          "focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring",
           error && "border-destructive",
         )}
       />
@@ -70,9 +87,7 @@ export function PinPad() {
       </p>
       {error ? (
         <p id={errorId} role="alert" className="text-center text-sm text-destructive">
-          {error.code === "INVALID_CREDENTIALS" || error.code === "VALIDATION"
-            ? t("pinInvalid")
-            : errorMessage}
+          {message}
         </p>
       ) : null}
       <div className="grid w-full grid-cols-3 gap-3">

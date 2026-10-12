@@ -1,7 +1,8 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { grantApproval, verifyApproval } from "@/server/auth/approval";
 import { verifyPasswordSignIn, verifyPinSignIn } from "@/server/auth/credentials";
-import { LOCKOUT_POLICY } from "@/server/auth/lockout";
+import { THROTTLE_RULES } from "@/server/auth/lockout";
+import { throttleKeys } from "@/server/auth/throttle";
 import { db, resetDatabase } from "../support/db";
 import { createLocation, createUser, pairDevice } from "../support/fixtures";
 
@@ -41,33 +42,82 @@ describe("password sign-in", () => {
     expect(inactive).toEqual(unknown);
   });
 
-  it("locks the account after repeated failures, even for the right password", async () => {
+  it("locks the account for that source after repeated failures, even for the right password", async () => {
     const user = await createUser({ role: "MANAGER", email: "m@shop.mn", password: PASSWORD });
     const now = new Date("2026-05-01T09:00:00Z");
-    for (let i = 0; i <= LOCKOUT_POLICY.freeAttempts; i++) {
-      await verifyPasswordSignIn(db, { email: "m@shop.mn", password: "wrong password!" }, { now });
+    const attacker = { now, ip: "203.0.113.7" };
+    for (let i = 0; i <= THROTTLE_RULES.accountFromIp.freeAttempts; i++) {
+      await verifyPasswordSignIn(db, { email: "m@shop.mn", password: "wrong password!" }, attacker);
     }
-    const locked = await db.user.findUniqueOrThrow({ where: { id: user.id } });
-    expect(locked.failedLogins).toBe(LOCKOUT_POLICY.freeAttempts + 1);
-    expect(locked.lockedUntil?.getTime()).toBeGreaterThan(now.getTime());
-
-    expect(
-      await verifyPasswordSignIn(db, { email: "m@shop.mn", password: PASSWORD }, { now }),
-    ).toEqual({
-      ok: false,
-      reason: "INVALID",
+    const bucket = await db.authThrottle.findUniqueOrThrow({
+      where: { key: throttleKeys.accountFromIp(user.id, attacker.ip) },
     });
+    expect(bucket.failures).toBe(THROTTLE_RULES.accountFromIp.freeAttempts + 1);
+    expect(bucket.lockedUntil?.getTime()).toBeGreaterThan(now.getTime());
 
-    const afterLock = new Date(locked.lockedUntil!.getTime() + 1);
-    const ok = await verifyPasswordSignIn(
+    // Locked from the attacker's address, even with the right password…
+    expect(
+      await verifyPasswordSignIn(db, { email: "m@shop.mn", password: PASSWORD }, attacker),
+    ).toEqual({ ok: false, reason: "INVALID" });
+    // …but the real manager signing in from elsewhere is not locked out.
+    const elsewhere = await verifyPasswordSignIn(
       db,
       { email: "m@shop.mn", password: PASSWORD },
-      { now: afterLock },
+      { now, ip: "198.51.100.20" },
     );
-    expect(ok.ok).toBe(true);
-    const reset = await db.user.findUniqueOrThrow({ where: { id: user.id } });
-    expect(reset.failedLogins).toBe(0);
-    expect(reset.lockedUntil).toBeNull();
+    expect(elsewhere.ok).toBe(true);
+    // Success clears the account-wide bucket, but the attacker's own bucket stays locked.
+    expect(await db.authThrottle.count({ where: { key: throttleKeys.account(user.id) } })).toBe(0);
+    expect(
+      await verifyPasswordSignIn(db, { email: "m@shop.mn", password: PASSWORD }, attacker),
+    ).toEqual({ ok: false, reason: "INVALID" });
+  });
+
+  it("forgets failures older than the window (no slow-drip escalation)", async () => {
+    const user = await createUser({ role: "MANAGER", email: "m@shop.mn", password: PASSWORD });
+    const ip = "203.0.113.8";
+    const start = new Date("2026-05-01T09:00:00Z");
+    for (let i = 0; i < THROTTLE_RULES.accountFromIp.freeAttempts; i++) {
+      await verifyPasswordSignIn(
+        db,
+        { email: "m@shop.mn", password: "nope nope nope" },
+        { now: start, ip },
+      );
+    }
+    const later = new Date(start.getTime() + THROTTLE_RULES.accountFromIp.windowMs + 1);
+    await verifyPasswordSignIn(
+      db,
+      { email: "m@shop.mn", password: "nope nope nope" },
+      { now: later, ip },
+    );
+    const bucket = await db.authThrottle.findUniqueOrThrow({
+      where: { key: throttleKeys.accountFromIp(user.id, ip) },
+    });
+    expect(bucket.failures).toBe(1);
+    expect(bucket.lockedUntil).toBeNull();
+  });
+
+  it("rate-limits a source that sprays many accounts, and says so", async () => {
+    const now = new Date("2026-05-01T09:00:00Z");
+    const ip = "203.0.113.9";
+    for (let i = 0; i <= THROTTLE_RULES.ip.freeAttempts; i++) {
+      await verifyPasswordSignIn(
+        db,
+        { email: `nobody${i}@shop.mn`, password: "x".repeat(12) },
+        { now, ip },
+      );
+    }
+    expect(
+      await verifyPasswordSignIn(
+        db,
+        { email: "any@shop.mn", password: "x".repeat(12) },
+        { now, ip },
+      ),
+    ).toEqual({ ok: false, reason: "RATE_LIMITED" });
+    // Unknown emails are audited too (without the attempted address).
+    expect(
+      await db.auditLog.count({ where: { action: "auth.login_failed", entityId: null } }),
+    ).toBe(THROTTLE_RULES.ip.freeAttempts + 1);
   });
 });
 
@@ -124,24 +174,33 @@ describe("PIN sign-in on a paired device", () => {
     });
   });
 
-  it("locks PIN entry on the device after repeated wrong PINs", async () => {
+  it("locks PIN entry on the device after repeated wrong PINs and reports it as locked", async () => {
     const { device, token } = await setup();
     const now = new Date("2026-05-01T09:00:00Z");
-    for (let i = 0; i <= LOCKOUT_POLICY.freeAttempts; i++) {
-      expect((await verifyPinSignIn(db, { pin: "0000", deviceToken: token }, { now })).ok).toBe(
-        false,
-      );
+    for (let i = 0; i <= THROTTLE_RULES.device.freeAttempts; i++) {
+      expect(await verifyPinSignIn(db, { pin: "000000", deviceToken: token }, { now })).toEqual({
+        ok: false,
+        reason: "INVALID",
+      });
     }
-    const locked = await db.device.findUniqueOrThrow({ where: { id: device.id } });
-    expect(locked.pinLockedUntil?.getTime()).toBeGreaterThan(now.getTime());
-    // Even the right PIN is refused while locked.
+    const bucket = await db.authThrottle.findUniqueOrThrow({
+      where: { key: throttleKeys.device(device.id) },
+    });
+    expect(bucket.lockedUntil?.getTime()).toBeGreaterThan(now.getTime());
+    // Even the right PIN is refused while locked — and the reason says "locked", not "wrong PIN".
     expect(await verifyPinSignIn(db, { pin: "4821", deviceToken: token }, { now })).toEqual({
       ok: false,
-      reason: "INVALID",
+      reason: "LOCKED",
     });
     expect(await db.auditLog.count({ where: { action: "auth.pin_failed" } })).toBe(
-      LOCKOUT_POLICY.freeAttempts + 1,
+      THROTTLE_RULES.device.freeAttempts + 1,
     );
+    // After the lock expires the right PIN works and clears the bucket.
+    const after = new Date(bucket.lockedUntil!.getTime() + 1);
+    expect(
+      (await verifyPinSignIn(db, { pin: "4821", deviceToken: token }, { now: after })).ok,
+    ).toBe(true);
+    expect(await db.authThrottle.count({ where: { key: throttleKeys.device(device.id) } })).toBe(0);
   });
 
   it("rejects malformed PINs without a database lookup leak", async () => {

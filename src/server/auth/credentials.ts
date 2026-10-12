@@ -3,27 +3,35 @@ import type { Role } from "@/domain/permissions";
 import { audit } from "../audit";
 import type { Db } from "../db";
 import { findActiveDevice, type ActiveDevice } from "./device";
-import { isLocked, lockUntilAfterFailure } from "./lockout";
+import { THROTTLE_RULES } from "./lockout";
 import { burnPasswordCheck, verifyPassword } from "./password";
 import { pinLookup, pinSchema } from "./pin";
+import { clearThrottle, isThrottled, recordFailure, throttleKeys, UNKNOWN_IP } from "./throttle";
 
 /**
  * Credential verification, independent of Auth.js so it can be tested
- * against a real database. Failure reasons are deliberately coarse: the UI
- * shows one message for "wrong credentials" and "temporarily locked", so an
- * attacker learns nothing about which accounts exist.
+ * against a real database.
+ *
+ * Password failures are deliberately coarse: "wrong credentials" and
+ * "account temporarily locked" look identical, so an attacker learns
+ * nothing about which accounts exist; only a lock on the caller's own
+ * source address is reported as RATE_LIMITED. A device PIN lock is reported
+ * as LOCKED — it reveals nothing about any PIN.
  */
 
 export interface AuthenticatedUser {
   id: string;
   name: string;
   role: Role;
+  locale: string | null;
   tokenVersion: number;
   deviceId: string | null;
 }
 
+export type SignInFailure = "INVALID" | "DEVICE_REQUIRED" | "LOCKED" | "RATE_LIMITED";
+
 export type SignInResult =
-  { ok: true; user: AuthenticatedUser } | { ok: false; reason: "INVALID" | "DEVICE_REQUIRED" };
+  { ok: true; user: AuthenticatedUser } | { ok: false; reason: SignInFailure };
 
 interface Context {
   now?: Date;
@@ -37,43 +45,56 @@ export async function verifyPasswordSignIn(
   ctx: Context = {},
 ): Promise<SignInResult> {
   const now = ctx.now ?? new Date();
+  const ip = ctx.ip?.trim() || UNKNOWN_IP;
   const email = input.email.trim().toLowerCase();
   const user = await client.user.findUnique({ where: { email } });
 
-  if (!user || !user.passwordHash || !user.isActive) {
+  const ipKey = throttleKeys.ip(ip);
+  const accountKeys = user
+    ? [throttleKeys.account(user.id), throttleKeys.accountFromIp(user.id, ip)]
+    : [];
+
+  if (await isThrottled(client, [ipKey], now)) {
+    await burnPasswordCheck(input.password);
+    return { ok: false, reason: "RATE_LIMITED" };
+  }
+  if (await isThrottled(client, accountKeys, now)) {
+    // Same cost and same answer as a wrong password; don't verify while locked.
     await burnPasswordCheck(input.password);
     return { ok: false, reason: "INVALID" };
   }
-  if (isLocked(user.lockedUntil, now)) {
-    // Don't even verify: a locked account can't be brute-forced in the window.
-    return { ok: false, reason: "INVALID" };
-  }
 
-  const valid = await verifyPassword(user.passwordHash, input.password);
-  if (!valid) {
-    const { failedLogins } = await client.user.update({
-      where: { id: user.id },
-      data: { failedLogins: { increment: 1 } },
-      select: { failedLogins: true },
-    });
-    const lockedUntil = lockUntilAfterFailure(failedLogins, now);
-    if (lockedUntil) await client.user.update({ where: { id: user.id }, data: { lockedUntil } });
+  const canSignIn = user !== null && user.passwordHash !== null && user.isActive;
+  const valid = canSignIn
+    ? await verifyPassword(user.passwordHash!, input.password)
+    : (await burnPasswordCheck(input.password), false);
+
+  if (!valid || !user) {
+    await recordFailure(client, ipKey, THROTTLE_RULES.ip, now);
+    if (user) {
+      await recordFailure(client, throttleKeys.account(user.id), THROTTLE_RULES.account, now);
+      await recordFailure(
+        client,
+        throttleKeys.accountFromIp(user.id, ip),
+        THROTTLE_RULES.accountFromIp,
+        now,
+      );
+    }
+    // Audited for unknown emails too (no PII), which also evens out timing.
     await audit(client, {
       actorId: null,
       action: "auth.login_failed",
       entityType: "User",
-      entityId: user.id,
-      meta: { method: "password", failedLogins, locked: lockedUntil !== null },
+      entityId: user?.id ?? null,
+      meta: { method: "password" },
       ip: ctx.ip,
       userAgent: ctx.userAgent,
     });
     return { ok: false, reason: "INVALID" };
   }
 
-  await client.user.update({
-    where: { id: user.id },
-    data: { failedLogins: 0, lockedUntil: null, lastLoginAt: now },
-  });
+  await clearThrottle(client, accountKeys);
+  await client.user.update({ where: { id: user.id }, data: { lastLoginAt: now } });
   await audit(client, {
     actorId: user.id,
     action: "auth.login",
@@ -89,38 +110,16 @@ export async function verifyPasswordSignIn(
       id: user.id,
       name: user.name,
       role: user.role,
+      locale: user.locale,
       tokenVersion: user.tokenVersion,
       deviceId: null,
     },
   };
 }
 
-/** Record a failed PIN attempt against the device and lock it when over the limit. */
-async function registerPinFailure(client: Db, device: ActiveDevice, now: Date, ctx: Context) {
-  const { failedPinAttempts } = await client.device.update({
-    where: { id: device.id },
-    data: { failedPinAttempts: { increment: 1 } },
-    select: { failedPinAttempts: true },
-  });
-  const pinLockedUntil = lockUntilAfterFailure(failedPinAttempts, now);
-  if (pinLockedUntil)
-    await client.device.update({ where: { id: device.id }, data: { pinLockedUntil } });
-  await audit(client, {
-    actorId: null,
-    action: "auth.pin_failed",
-    entityType: "Device",
-    entityId: device.id,
-    locationId: device.locationId,
-    registerId: device.registerId,
-    meta: { failedPinAttempts, locked: pinLockedUntil !== null },
-    ip: ctx.ip,
-    userAgent: ctx.userAgent,
-  });
-}
-
 /**
  * Resolve the staff member behind a PIN on a paired device. Also used for
- * manager approvals, which share the same per-device lockout.
+ * manager approvals, which share the same per-device throttle.
  */
 export async function verifyDevicePin(
   client: Db,
@@ -128,12 +127,13 @@ export async function verifyDevicePin(
   ctx: Context = {},
 ): Promise<
   | { ok: true; user: AuthenticatedUser & { locationIds: string[] }; device: ActiveDevice }
-  | { ok: false; reason: "INVALID" | "DEVICE_REQUIRED" }
+  | { ok: false; reason: "INVALID" | "DEVICE_REQUIRED" | "LOCKED" }
 > {
   const now = ctx.now ?? new Date();
   const device = await findActiveDevice(client, input.deviceToken);
   if (!device) return { ok: false, reason: "DEVICE_REQUIRED" };
-  if (isLocked(device.pinLockedUntil, now)) return { ok: false, reason: "INVALID" };
+  const deviceKey = throttleKeys.device(device.id);
+  if (await isThrottled(client, [deviceKey], now)) return { ok: false, reason: "LOCKED" };
 
   const user = pinSchema.safeParse(input.pin).success
     ? await client.user.findUnique({
@@ -145,16 +145,27 @@ export async function verifyDevicePin(
   const allowedHere = user?.role === "OWNER" || locationIds.includes(device.locationId);
 
   if (!user || !user.isActive || !allowedHere) {
-    await registerPinFailure(client, device, now, ctx);
+    const { failures, lockedUntil } = await recordFailure(
+      client,
+      deviceKey,
+      THROTTLE_RULES.device,
+      now,
+    );
+    await audit(client, {
+      actorId: null,
+      action: "auth.pin_failed",
+      entityType: "Device",
+      entityId: device.id,
+      locationId: device.locationId,
+      registerId: device.registerId,
+      meta: { failures, locked: lockedUntil !== null },
+      ip: ctx.ip,
+      userAgent: ctx.userAgent,
+    });
     return { ok: false, reason: "INVALID" };
   }
 
-  if (device.failedPinAttempts > 0 || device.pinLockedUntil) {
-    await client.device.update({
-      where: { id: device.id },
-      data: { failedPinAttempts: 0, pinLockedUntil: null },
-    });
-  }
+  await clearThrottle(client, [deviceKey]);
   return {
     ok: true,
     device,
@@ -162,6 +173,7 @@ export async function verifyDevicePin(
       id: user.id,
       name: user.name,
       role: user.role,
+      locale: user.locale,
       tokenVersion: user.tokenVersion,
       deviceId: device.id,
       locationIds,

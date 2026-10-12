@@ -4,14 +4,15 @@ import { ErrorState } from "@/components/app/error-state";
 
 export default function RouteError({
   error,
-  reset,
+  retry,
 }: {
   error: Error & { digest?: string };
-  reset: () => void;
+  /** Re-fetches and re-renders the segment (reset() alone would re-throw). */
+  retry: () => void;
 }) {
   return (
     <main id="main" className="flex min-h-dvh items-center justify-center">
-      <ErrorState digest={error.digest} onRetry={reset} />
+      <ErrorState digest={error.digest} onRetry={retry} />
     </main>
   );
 }

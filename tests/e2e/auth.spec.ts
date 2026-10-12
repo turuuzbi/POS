@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { resetSeedLocales } from "./db";
 import { en, enterPin, formAlert, mn, SEED, signInWithPassword, signOut } from "./fixtures";
 
 test.describe("sign-in", () => {
@@ -14,6 +15,11 @@ test.describe("sign-in", () => {
     });
     await expect(formAlert(page)).toHaveText(mn.auth.invalid);
     await expect(page).toHaveURL(/\/login$/);
+  });
+
+  test.afterEach(async () => {
+    // The language test persists a preference; never leak it into later tests.
+    await resetSeedLocales();
   });
 
   test("owner signs in, switches language, signs out", async ({ page }) => {

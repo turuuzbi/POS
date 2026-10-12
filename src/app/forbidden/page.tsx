@@ -24,6 +24,7 @@ export default async function ForbiddenPage() {
           </Button>
         }
         className="w-full max-w-lg"
+        headingLevel={1}
       />
     </main>
   );

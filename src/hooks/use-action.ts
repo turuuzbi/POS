@@ -1,5 +1,6 @@
 "use client";
 
+import { unstable_isUnrecognizedActionError } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useCallback, useState, useTransition } from "react";
 import { toast } from "sonner";
@@ -38,6 +39,11 @@ export function useAction<I, R>(action: (input: I) => Promise<ActionResult<R>>) 
           result = await action(input);
         } catch (error) {
           if (isNavigationSignal(error)) return; // the action redirected
+          if (unstable_isUnrecognizedActionError(error)) {
+            // A new deployment replaced this page's actions: reload to pick it up.
+            window.location.reload();
+            return;
+          }
           result = { ok: false, error: { code: "INTERNAL" } }; // network failure
         }
         if (!result) return;

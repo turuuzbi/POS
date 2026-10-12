@@ -92,7 +92,7 @@ export async function grantApproval(
   ctx: { now?: Date; ip?: string | null; userAgent?: string | null } = {},
 ): Promise<
   | { ok: true; token: string; approverName: string }
-  | { ok: false; reason: "INVALID" | "DEVICE_REQUIRED" | "NOT_PERMITTED" }
+  | { ok: false; reason: "INVALID" | "DEVICE_REQUIRED" | "LOCKED" | "NOT_PERMITTED" }
 > {
   const result = await verifyDevicePin(
     client,

@@ -4,10 +4,11 @@ import { ErrorState } from "@/components/app/error-state";
 
 export default function AdminError({
   error,
-  reset,
+  retry,
 }: {
   error: Error & { digest?: string };
-  reset: () => void;
+  /** Re-fetches and re-renders the segment (reset() alone would re-throw). */
+  retry: () => void;
 }) {
-  return <ErrorState digest={error.digest} onRetry={reset} />;
+  return <ErrorState digest={error.digest} onRetry={retry} />;
 }

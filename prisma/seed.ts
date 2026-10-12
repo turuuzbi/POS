@@ -6,6 +6,7 @@
  *   pnpm db:seed
  */
 import { fromMajor } from "@/domain/money";
+import { units } from "@/domain/qty";
 import { ean13CheckDigit, normalizePlu } from "@/domain/scale-barcode";
 import { hashPassword } from "@/server/auth/password";
 import { pinLookup } from "@/server/auth/pin";
@@ -13,6 +14,9 @@ import { db } from "@/server/db";
 import { SEED_CATEGORIES, SEED_PRODUCTS } from "./seed-data";
 
 const DEV_PASSWORD = process.env.SEED_OWNER_PASSWORD ?? "demo-password-2026";
+/** Opening stock per variant: whole pieces, or kilograms for weighed goods. */
+const OPENING_PIECES = 40;
+const OPENING_KG = 25;
 
 const STAFF = [
   { key: "owner", name: "Бат-Эрдэнэ", role: "OWNER", email: "owner@pos.local", pin: "905174" },
@@ -78,8 +82,12 @@ async function seedStaff(locationId: string) {
   const passwordHash = await hashPassword(DEV_PASSWORD);
   for (const member of STAFF) {
     const lookup = pinLookup(member.pin);
+    // Stable key: email, or name+role for PIN-only staff (not the PIN hash,
+    // which changes with PIN_PEPPER and would create duplicates).
     const existing = await db.user.findFirst({
-      where: member.email ? { email: member.email } : { pinLookup: lookup },
+      where: member.email
+        ? { email: member.email }
+        : { name: member.name, role: member.role, email: null },
     });
     if (existing) continue;
     await db.user.create({
@@ -152,6 +160,54 @@ async function seedCatalog(taxClassId: string) {
   return created;
 }
 
+/**
+ * Opening stock as ledger entries: one OPENING movement per stocked variant
+ * plus its StockLevel projection, in one transaction. Skips variants that
+ * already have any movement at the location (idempotent).
+ * Phase 1 moves this onto the stock service.
+ */
+async function seedOpeningStock(locationId: string, createdById: string) {
+  const variants = await db.productVariant.findMany({
+    where: { product: { trackStock: true, type: "STANDARD" } },
+    include: { product: { select: { unit: true } } },
+  });
+  let created = 0;
+  for (const variant of variants) {
+    const already = await db.stockMovement.count({
+      where: { variantId: variant.id, locationId },
+    });
+    if (already > 0) continue;
+    const qtyMilli = units(variant.product.unit === "PIECE" ? OPENING_PIECES : OPENING_KG);
+    await db.$transaction([
+      db.stockMovement.create({
+        data: {
+          variantId: variant.id,
+          locationId,
+          type: "OPENING",
+          qtyDeltaMilli: qtyMilli,
+          balanceAfterMilli: qtyMilli,
+          unitCost: variant.cost,
+          note: "Seed opening stock",
+          createdById,
+        },
+      }),
+      db.stockLevel.upsert({
+        where: { variantId_locationId: { variantId: variant.id, locationId } },
+        update: {},
+        create: {
+          variantId: variant.id,
+          locationId,
+          onHandMilli: qtyMilli,
+          reorderPointMilli: Math.round(qtyMilli / 4),
+          reorderQtyMilli: qtyMilli,
+        },
+      }),
+    ]);
+    created++;
+  }
+  return created;
+}
+
 async function main() {
   if (process.env.NODE_ENV === "production" && process.env.SEED_ALLOW_PRODUCTION !== "1") {
     throw new Error(
@@ -162,8 +218,13 @@ async function main() {
   const { location } = await seedLocation();
   await seedStaff(location.id);
   const created = await seedCatalog(standard.id);
+  const owner = await db.user.findUniqueOrThrow({ where: { email: "owner@pos.local" } });
+  const stocked = await seedOpeningStock(location.id, owner.id);
 
-  console.warn(`Seed complete: ${created} new products (${SEED_PRODUCTS.length} in catalog).`);
+  console.warn(
+    `Seed complete: ${created} new products (${SEED_PRODUCTS.length} in catalog), ` +
+      `opening stock for ${stocked} variants.`,
+  );
   console.warn("Development sign-in (change these before any real use):");
   for (const member of STAFF) {
     const login = member.email ? `${member.email} / ${DEV_PASSWORD}` : "PIN only";

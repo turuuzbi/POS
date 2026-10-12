@@ -2,7 +2,7 @@
 
 import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,6 +22,7 @@ export function PairDeviceForm({ locations }: { locations: LocationOption[] }) {
   const router = useRouter();
   const { run, pending, errorMessage, fieldErrors } = useAction(pairThisDevice);
   const [name, setName] = useState("");
+  const nameRef = useRef<HTMLInputElement>(null);
   const [locationId, setLocationId] = useState(locations[0]?.id ?? "");
   const registers = locations.find((l) => l.id === locationId)?.registers ?? [];
   const [registerId, setRegisterId] = useState(registers[0]?.id ?? "");
@@ -37,6 +38,7 @@ export function PairDeviceForm({ locations }: { locations: LocationOption[] }) {
             onSuccess: () => {
               toast.success(t("paired"));
               setName("");
+              nameRef.current?.focus(); // the submit button just became disabled
               router.refresh();
             },
           },
@@ -47,6 +49,7 @@ export function PairDeviceForm({ locations }: { locations: LocationOption[] }) {
         <Label htmlFor="device-name">{t("name")}</Label>
         <Input
           id="device-name"
+          ref={nameRef}
           value={name}
           maxLength={80}
           placeholder={t("namePlaceholder")}

@@ -35,7 +35,7 @@ export default async function RegisterPage() {
         <div className="ml-auto flex items-center gap-1">
           {hasPermission(user.role, "reports.view") ? (
             <Button variant="ghost" asChild>
-              <Link href="/dashboard">
+              <Link href="/dashboard" aria-label={t("pos.backOffice")}>
                 <LayoutDashboard aria-hidden />
                 <span className="hidden sm:inline">{t("pos.backOffice")}</span>
               </Link>
