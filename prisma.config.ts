@@ -11,7 +11,13 @@ loadDotenv({ quiet: true });
 function migrationUrl(): string | undefined {
   if (shellDatabaseUrl && !shellDirectUrl) return shellDatabaseUrl;
   // `||`, not `??`: an empty DIRECT_DATABASE_URL="" falls back too.
-  return process.env.DIRECT_DATABASE_URL || process.env.DATABASE_URL || undefined;
+  return (
+    process.env.DIRECT_DATABASE_URL ||
+    // Set automatically by Vercel's Neon integration.
+    process.env.DATABASE_URL_UNPOOLED ||
+    process.env.DATABASE_URL ||
+    undefined
+  );
 }
 
 export default defineConfig({

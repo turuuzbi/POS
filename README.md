@@ -46,6 +46,18 @@ PIN sign-in works only on a **paired device**. Sign in as a manager, open
 **Төхөөрөмж / Devices** and pair the browser. After that, signing out goes
 to the PIN pad.
 
+## Staging (Vercel + Neon)
+
+The `pos-staging` Vercel project deploys every push to the repository's default branch.
+
+- **Build Command:** `pnpm vercel-build` (`scripts/vercel-build.sh`). It applies migrations and,
+  when `SEED_ON_DEPLOY=1` is set, seeds the demo data (idempotent). Then it builds.
+- **Database:** a Neon database connected through the project's Storage tab, in the Singapore
+  region, next to the `sin1` functions. The integration sets `DATABASE_URL` (pooled, used by the
+  app) and `DATABASE_URL_UNPOOLED` (direct, used by migrations).
+- **Secrets:** `AUTH_SECRET`, `PIN_PEPPER` and `GIFT_CARD_PEPPER` are set in the project's
+  environment variables. They are never committed.
+
 ## Scripts
 
 | Command                                  | What it does                                                                                                                 |
