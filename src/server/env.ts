@@ -22,7 +22,13 @@ let cached: Env | undefined;
  */
 export function env(): Env {
   if (!cached) {
-    const parsed = schema.safeParse(process.env);
+    // Vercel storage integrations may prefix injected variables (e.g.
+    // STRG_DATABASE_URL); DATABASE_ENV_PREFIX names that prefix.
+    const prefix = process.env.DATABASE_ENV_PREFIX ?? "";
+    const parsed = schema.safeParse({
+      ...process.env,
+      DATABASE_URL: process.env.DATABASE_URL ?? process.env[`${prefix}DATABASE_URL`],
+    });
     if (!parsed.success) {
       const problems = parsed.error.issues
         .map((issue) => `  ${issue.path.join(".")}: ${issue.message}`)

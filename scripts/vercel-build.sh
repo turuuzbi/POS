@@ -3,6 +3,16 @@
 # Set as the project's Build Command: `pnpm vercel-build`.
 set -euo pipefail
 
+# Vercel's storage integrations may add a prefix to the variables they inject
+# (e.g. STRG_DATABASE_URL). DATABASE_ENV_PREFIX names it; map to the
+# unprefixed names that Prisma and the app read.
+prefix="${DATABASE_ENV_PREFIX:-}"
+if [[ -n "$prefix" ]]; then
+  pooled="${prefix}DATABASE_URL"; direct="${prefix}DATABASE_URL_UNPOOLED"
+  export DATABASE_URL="${DATABASE_URL:-${!pooled:-}}"
+  export DATABASE_URL_UNPOOLED="${DATABASE_URL_UNPOOLED:-${!direct:-}}"
+fi
+
 if [[ -z "${DATABASE_URL:-}" ]]; then
   echo "DATABASE_URL is not set. Connect a Neon database to this Vercel project" \
        "(Storage → Neon) or add DATABASE_URL/DIRECT_DATABASE_URL manually." >&2
