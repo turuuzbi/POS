@@ -25,9 +25,12 @@ if [[ -z "${DIRECT_DATABASE_URL:-}${DATABASE_URL_UNPOOLED:-}" ]]; then
 fi
 pnpm exec prisma migrate deploy
 
-# Staging only: idempotent demo data (never overwrites existing rows).
+# Staging only: idempotent demo data (never overwrites existing rows). Like
+# migrations it's an admin task, so it goes over the direct URL too, and is
+# bounded so a stuck connection fails the build instead of hanging it.
 if [[ "${SEED_ON_DEPLOY:-}" == "1" ]]; then
-  SEED_ALLOW_PRODUCTION=1 pnpm exec prisma db seed
+  DATABASE_URL="${DIRECT_DATABASE_URL:-${DATABASE_URL_UNPOOLED:-$DATABASE_URL}}" \
+    SEED_ALLOW_PRODUCTION=1 timeout 300 pnpm exec prisma db seed
 fi
 
 pnpm exec next build

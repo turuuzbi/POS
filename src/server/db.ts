@@ -9,7 +9,13 @@ export type Tx = Prisma.TransactionClient;
 
 function createClient(): PrismaClient {
   const { DATABASE_URL, DATABASE_POOL_MAX } = env();
-  const adapter = new PrismaPg({ connectionString: DATABASE_URL, max: DATABASE_POOL_MAX });
+  const adapter = new PrismaPg({
+    connectionString: DATABASE_URL,
+    max: DATABASE_POOL_MAX,
+    // pg waits forever for a connection by default; fail fast instead so an
+    // unreachable database surfaces as an error rather than a hung request.
+    connectionTimeoutMillis: 10_000,
+  });
   return new PrismaClient({ adapter });
 }
 

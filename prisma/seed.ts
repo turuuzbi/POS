@@ -216,11 +216,15 @@ async function main() {
       "Refusing to seed a production database (set SEED_ALLOW_PRODUCTION=1 to override).",
     );
   }
+  console.warn("Seeding settings and tax classes…");
   const standard = await seedSettingsAndTax();
   const { location } = await seedLocation();
+  console.warn("Seeding staff…");
   await seedStaff(location.id);
+  console.warn("Seeding catalog…");
   const created = await seedCatalog(standard.id);
   const owner = await db.user.findUniqueOrThrow({ where: { email: "owner@pos.local" } });
+  console.warn("Seeding opening stock…");
   const stocked = await seedOpeningStock(location.id, owner.id);
 
   console.warn(
