@@ -5,11 +5,14 @@ import { defineConfig } from "prisma/config";
 // DATABASE_URL must not be silently overridden by a DIRECT_DATABASE_URL that
 // .env points at another database (e.g. Neon) for destructive commands.
 const shellDatabaseUrl = process.env.DATABASE_URL;
-const shellDirectUrl = process.env.DIRECT_DATABASE_URL;
+// A direct URL from the environment (incl. Vercel's DATABASE_URL_UNPOOLED)
+// always beats the pooled one: migrations break through a pooler.
+const shellDirectUrl = process.env.DIRECT_DATABASE_URL || process.env.DATABASE_URL_UNPOOLED;
 loadDotenv({ quiet: true });
 
 function migrationUrl(): string | undefined {
-  if (shellDatabaseUrl && !shellDirectUrl) return shellDatabaseUrl;
+  if (shellDirectUrl) return shellDirectUrl;
+  if (shellDatabaseUrl) return shellDatabaseUrl;
   // `||`, not `??`: an empty DIRECT_DATABASE_URL="" falls back too.
   return (
     process.env.DIRECT_DATABASE_URL ||

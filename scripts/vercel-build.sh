@@ -10,7 +10,7 @@ prefix="${DATABASE_ENV_PREFIX:-}"
 if [[ -n "$prefix" ]]; then
   pooled="${prefix}DATABASE_URL"; direct="${prefix}DATABASE_URL_UNPOOLED"
   export DATABASE_URL="${DATABASE_URL:-${!pooled:-}}"
-  export DATABASE_URL_UNPOOLED="${DATABASE_URL_UNPOOLED:-${!direct:-}}"
+  export DIRECT_DATABASE_URL="${DIRECT_DATABASE_URL:-${!direct:-}}"
 fi
 
 if [[ -z "${DATABASE_URL:-}" ]]; then
@@ -19,7 +19,10 @@ if [[ -z "${DATABASE_URL:-}" ]]; then
   exit 1
 fi
 
-# Migrations use the direct (non-pooled) URL; see prisma.config.ts.
+# Migrations must use the direct (non-pooled) URL; see prisma.config.ts.
+if [[ -z "${DIRECT_DATABASE_URL:-}${DATABASE_URL_UNPOOLED:-}" ]]; then
+  echo "Warning: no direct database URL; migrating through DATABASE_URL." >&2
+fi
 pnpm exec prisma migrate deploy
 
 # Staging only: idempotent demo data (never overwrites existing rows).
