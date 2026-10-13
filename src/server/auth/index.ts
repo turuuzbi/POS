@@ -12,7 +12,8 @@ import {
   type AuthenticatedUser,
   type SignInResult,
 } from "./credentials";
-import { deviceTokenFromCookieHeader } from "./device";
+import { cookieFromHeader, deviceTokenFromCookieHeader } from "./device";
+import { KNOWN_BROWSER_COOKIE } from "./known-browser";
 
 /** Shift-length sessions: a cashier's sign-in doesn't outlive the working day. */
 export const SESSION_MAX_AGE_SECONDS = 12 * 60 * 60;
@@ -48,7 +49,13 @@ const pinInput = z.object({ pin: z.string().max(16) });
  * `X-Auth-Return-Redirect` or a malformed callback-url cookie), so success
  * must never be inferred from "signIn() did not throw".
  */
-const signInScope = new AsyncLocalStorage<{ user?: AuthenticatedUser }>();
+const signInScope = new AsyncLocalStorage<VerifiedSignIn>();
+
+export interface VerifiedSignIn {
+  user?: AuthenticatedUser;
+  /** Known-browser cookie value to set after a password sign-in. */
+  knownBrowser?: string;
+}
 
 function requestContext(request: Request) {
   return {
@@ -62,7 +69,10 @@ function requestContext(request: Request) {
 function toAuthUser(result: SignInResult) {
   if (!result.ok) throw new SignInFailed(FAILURE_CODE[result.reason]);
   const store = signInScope.getStore();
-  if (store) store.user = result.user;
+  if (store) {
+    store.user = result.user;
+    store.knownBrowser = result.knownBrowser;
+  }
   const { user } = result;
   return { id: user.id, name: user.name, tokenVersion: user.tokenVersion, deviceId: user.deviceId };
 }
@@ -88,7 +98,10 @@ export const { auth, signIn, signOut } = NextAuth(() => ({
       async authorize(raw, request) {
         const input = passwordInput.safeParse(raw);
         if (!input.success) throw new SignInFailed(SIGN_IN_CODES.invalid);
-        return toAuthUser(await verifyPasswordSignIn(db, input.data, requestContext(request)));
+        const knownBrowser = cookieFromHeader(request.headers.get("cookie"), KNOWN_BROWSER_COOKIE);
+        return toAuthUser(
+          await verifyPasswordSignIn(db, input.data, { ...requestContext(request), knownBrowser }),
+        );
       },
     }),
     Credentials({
@@ -132,17 +145,17 @@ export const { auth, signIn, signOut } = NextAuth(() => ({
 }));
 
 /**
- * Sign in through Auth.js and return the user verified by our authorize(),
- * or null. Throws CredentialsSignin (with a SIGN_IN_CODES code) on known
- * failures; any other error is an infrastructure failure.
+ * Sign in through Auth.js and return what our own authorize() verified (no
+ * `user` = not signed in). Throws CredentialsSignin (with a SIGN_IN_CODES
+ * code) on known failures; any other error is an infrastructure failure.
  */
 export async function signInVerified(
   provider: "password" | "pin",
   fields: Record<string, string>,
-): Promise<AuthenticatedUser | null> {
-  const holder: { user?: AuthenticatedUser } = {};
+): Promise<VerifiedSignIn> {
+  const holder: VerifiedSignIn = {};
   await signInScope.run(holder, () => signIn(provider, { ...fields, redirect: false }));
-  return holder.user ?? null;
+  return holder;
 }
 
 export { CredentialsSignin };

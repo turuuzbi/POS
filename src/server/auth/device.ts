@@ -50,13 +50,13 @@ export async function findActiveDevice(client: Db, token: string | null | undefi
 
 export type ActiveDevice = NonNullable<Awaited<ReturnType<typeof findActiveDevice>>>;
 
-/** Read the device secret from a raw Cookie header (Auth.js authorize() gets a Request). */
-export function deviceTokenFromCookieHeader(cookieHeader: string | null): string | null {
+/** One cookie's value from a raw Cookie header (Auth.js authorize() gets a Request). */
+export function cookieFromHeader(cookieHeader: string | null, name: string): string | null {
   if (!cookieHeader) return null;
   for (const part of cookieHeader.split(";")) {
     const index = part.indexOf("=");
     if (index === -1) continue;
-    if (part.slice(0, index).trim() === DEVICE_COOKIE) {
+    if (part.slice(0, index).trim() === name) {
       try {
         return decodeURIComponent(part.slice(index + 1).trim());
       } catch {
@@ -65,6 +65,10 @@ export function deviceTokenFromCookieHeader(cookieHeader: string | null): string
     }
   }
   return null;
+}
+
+export function deviceTokenFromCookieHeader(cookieHeader: string | null): string | null {
+  return cookieFromHeader(cookieHeader, DEVICE_COOKIE);
 }
 
 export async function readDeviceToken(): Promise<string | null> {

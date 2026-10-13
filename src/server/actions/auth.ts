@@ -7,6 +7,7 @@ import { APPROVABLE_PERMISSIONS } from "@/domain/permissions";
 import { isLocale, LOCALE_COOKIE } from "@/i18n/config";
 import { grantApproval } from "../auth/approval";
 import { readDeviceToken } from "../auth/device";
+import { KNOWN_BROWSER_COOKIE, knownBrowserCookieOptions } from "../auth/known-browser";
 import { auth, CredentialsSignin, SIGN_IN_CODES, signInVerified, signOut } from "../auth/index";
 import { safeNextPath } from "../auth/next-path";
 import { db } from "../db";
@@ -29,9 +30,9 @@ async function applyPreferredLocale(locale: string | null | undefined) {
  * propagates and is reported as INTERNAL — never as "wrong password".
  */
 async function verifiedSignIn(provider: "password" | "pin", fields: Record<string, string>) {
-  let user;
+  let verified;
   try {
-    user = await signInVerified(provider, fields);
+    verified = await signInVerified(provider, fields);
   } catch (error) {
     if (!(error instanceof CredentialsSignin)) throw error;
     switch (error.code) {
@@ -44,7 +45,11 @@ async function verifiedSignIn(provider: "password" | "pin", fields: Record<strin
         throw new ActionError("INVALID_CREDENTIALS");
     }
   }
+  const { user, knownBrowser } = verified;
   if (!user) throw new ActionError("INVALID_CREDENTIALS");
+  if (knownBrowser) {
+    (await cookies()).set(KNOWN_BROWSER_COOKIE, knownBrowser, knownBrowserCookieOptions);
+  }
   return user;
 }
 
@@ -130,8 +135,6 @@ export const requestApproval = defineAction({
         throw new ActionError("DEVICE_REQUIRED");
       case "LOCKED":
         throw new ActionError("RATE_LIMITED");
-      case "NOT_PERMITTED":
-        throw new ActionError("FORBIDDEN");
       default:
         throw new ActionError("INVALID_CREDENTIALS");
     }

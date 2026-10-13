@@ -157,6 +157,146 @@ describe("password sign-in", () => {
         )
       ).ok,
     ).toBe(true);
+    // Signing in there doesn't lift the lock the attackers face.
+    expect(
+      await verifyPasswordSignIn(
+        db,
+        { email: "o@shop.mn", password: PASSWORD },
+        { now, ip: "192.0.2.78" },
+      ),
+    ).toEqual({ ok: false, reason: "INVALID" });
+  });
+
+  it("checks at most freeAttempts + 1 passwords from a parallel burst", async () => {
+    await createUser({ role: "MANAGER", email: "m@shop.mn", password: PASSWORD });
+    const now = new Date("2026-05-01T09:00:00Z");
+    const ip = "203.0.113.30";
+    await Promise.all(
+      Array.from({ length: 16 }, (_, i) =>
+        verifyPasswordSignIn(db, { email: "m@shop.mn", password: `guess-${i}-guess` }, { now, ip }),
+      ),
+    );
+    // Only checked attempts reach the source bucket; refused ones count on
+    // the account+source bucket alone.
+    const source = await db.authThrottle.findUniqueOrThrow({
+      where: { key: throttleKeys.source(ip) },
+    });
+    expect(source.failures).toBe(THROTTLE_RULES.accountFromSource.freeAttempts + 1);
+    const accountFromSource = await db.authThrottle.findUniqueOrThrow({
+      where: { key: throttleKeys.accountFromSource(emailKey("m@shop.mn"), ip) },
+    });
+    expect(accountFromSource.failures).toBe(16);
+  });
+
+  it("one source can't trip the account-wide lock for everyone else", async () => {
+    await createUser({ role: "OWNER", email: "o@shop.mn", password: PASSWORD });
+    const now = new Date("2026-05-01T09:00:00Z");
+    for (let i = 0; i <= THROTTLE_RULES.account.freeAttempts + 5; i++) {
+      await verifyPasswordSignIn(
+        db,
+        { email: "o@shop.mn", password: `guess-${i}-guess` },
+        { now, ip: "203.0.113.40" },
+      );
+    }
+    const result = await verifyPasswordSignIn(
+      db,
+      { email: "o@shop.mn", password: PASSWORD },
+      { now, ip: "198.51.100.44" },
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("a known browser can't be locked out by others on the same network", async () => {
+    await createUser({ role: "OWNER", email: "o@shop.mn", password: PASSWORD });
+    const now = new Date("2026-05-01T09:00:00Z");
+    const shop = "198.51.100.10";
+    const first = await verifyPasswordSignIn(
+      db,
+      { email: "o@shop.mn", password: PASSWORD },
+      { now, ip: shop },
+    );
+    if (!first.ok) throw new Error("first sign-in failed");
+    const cookie = first.knownBrowser;
+    expect(cookie).toBeTruthy();
+
+    // Someone on the shop Wi-Fi sprays the sign-in form and guesses the owner's password.
+    for (let i = 0; i <= THROTTLE_RULES.source.freeAttempts; i++) {
+      await verifyPasswordSignIn(
+        db,
+        { email: i % 2 ? "o@shop.mn" : `x${i}@shop.mn`, password: "wrong-wrong" },
+        { now, ip: shop },
+      );
+    }
+    // A new browser at the shop is now refused…
+    expect(
+      (
+        await verifyPasswordSignIn(
+          db,
+          { email: "o@shop.mn", password: PASSWORD },
+          { now, ip: shop },
+        )
+      ).ok,
+    ).toBe(false);
+    // …but the owner's own browser still gets in.
+    expect(
+      (
+        await verifyPasswordSignIn(
+          db,
+          { email: "o@shop.mn", password: PASSWORD },
+          { now, ip: shop, knownBrowser: cookie },
+        )
+      ).ok,
+    ).toBe(true);
+  });
+
+  it("a known-browser cookie only counts for the account that signed in with it", async () => {
+    await createUser({ role: "OWNER", email: "o@shop.mn", password: PASSWORD });
+    await createUser({ role: "MANAGER", email: "m@shop.mn", password: PASSWORD });
+    const now = new Date("2026-05-01T09:00:00Z");
+    const ip = "203.0.113.60";
+    const mine = await verifyPasswordSignIn(
+      db,
+      { email: "m@shop.mn", password: PASSWORD },
+      { now, ip },
+    );
+    if (!mine.ok) throw new Error("sign-in failed");
+    // Guessing the owner's password with the manager's cookie uses the ordinary buckets.
+    for (let i = 0; i <= THROTTLE_RULES.accountFromSource.freeAttempts; i++) {
+      await verifyPasswordSignIn(
+        db,
+        { email: "o@shop.mn", password: `guess-${i}-guess` },
+        { now, ip, knownBrowser: mine.knownBrowser },
+      );
+    }
+    expect(
+      await db.authThrottle.findUnique({
+        where: { key: throttleKeys.accountFromSource(emailKey("o@shop.mn"), ip) },
+      }),
+    ).toMatchObject({ failures: THROTTLE_RULES.accountFromSource.freeAttempts + 1 });
+    // A forged cookie is ignored too.
+    const forged = `${"A".repeat(22)}.${"B".repeat(22)}`;
+    expect(
+      await verifyPasswordSignIn(
+        db,
+        { email: "o@shop.mn", password: PASSWORD },
+        { now, ip, knownBrowser: forged },
+      ),
+    ).toEqual({ ok: false, reason: "INVALID" });
+  });
+
+  it("bounds an attacker rotating through IPv6 /64s within one /48", async () => {
+    const now = new Date("2026-05-01T09:00:00Z");
+    let refused = false;
+    for (let i = 0; i <= THROTTLE_RULES.sourceNetwork.freeAttempts + 1; i++) {
+      const ip = `2001:db8:77:${i.toString(16)}::1`;
+      const result = await verifyPasswordSignIn(
+        db,
+        { email: `spray${i}@shop.mn`, password: "wrong-wrong" },
+        { now, ip },
+      );
+      if (!result.ok && result.reason === "RATE_LIMITED") refused = true;
+    }
+    expect(refused).toBe(true);
   });
 
   it("answers identically for real and unknown emails (no existence oracle)", async () => {
@@ -297,12 +437,78 @@ describe("PIN sign-in on a paired device", () => {
     expect(await db.auditLog.count({ where: { action: "auth.pin_failed" } })).toBe(
       THROTTLE_RULES.device.freeAttempts + 1,
     );
-    // After the lock expires the right PIN works and clears the bucket.
+    // After the lock expires the right PIN works, and gives back only its own attempt.
     const after = new Date(bucket.lockedUntil!.getTime() + 1);
     expect(
       (await verifyPinSignIn(db, { pin: "4821", deviceToken: token }, { now: after })).ok,
     ).toBe(true);
-    expect(await db.authThrottle.count({ where: { key: throttleKeys.device(device.id) } })).toBe(0);
+    const settled = await db.authThrottle.findUniqueOrThrow({
+      where: { key: throttleKeys.device(device.id) },
+    });
+    expect(settled.failures).toBe(THROTTLE_RULES.device.freeAttempts + 1);
+  });
+
+  it("a correct PIN never resets other people's wrong guesses on the device", async () => {
+    const { cashier, token } = await setup();
+    const now = new Date("2026-05-01T09:00:00Z");
+    // Guess, then sign in with your own PIN to "reset" the counter, and repeat.
+    for (let round = 0; round < 3; round++) {
+      for (let i = 0; i < 3; i++) {
+        await verifyPinSignIn(db, { pin: `11${round}${i}`, deviceToken: token }, { now });
+      }
+      const own = await verifyPinSignIn(db, { pin: "4821", deviceToken: token }, { now });
+      if (!own.ok) {
+        expect(own).toEqual({ ok: false, reason: "LOCKED" });
+        return;
+      }
+      expect(own.user.id).toBe(cashier.id);
+    }
+    // 9 wrong guesses in the hour: the device must be locked by now.
+    expect(await verifyPinSignIn(db, { pin: "4821", deviceToken: token }, { now })).toEqual({
+      ok: false,
+      reason: "LOCKED",
+    });
+  });
+
+  it("checks at most freeAttempts + 1 PINs from a parallel burst", async () => {
+    const { device, token } = await setup();
+    const now = new Date("2026-05-01T09:00:00Z");
+    const results = await Promise.all(
+      Array.from({ length: 20 }, (_, i) =>
+        verifyPinSignIn(db, { pin: String(100000 + i), deviceToken: token }, { now }),
+      ),
+    );
+    const checked = results.filter((r) => !r.ok && r.reason === "INVALID").length;
+    expect(checked).toBe(THROTTLE_RULES.device.freeAttempts + 1);
+    expect(results.filter((r) => !r.ok && r.reason === "LOCKED")).toHaveLength(20 - checked);
+    expect(await db.auditLog.count({ where: { action: "auth.pin_failed" } })).toBe(checked);
+    // Locked attempts don't extend the lock.
+    const bucket = await db.authThrottle.findUniqueOrThrow({
+      where: { key: throttleKeys.device(device.id) },
+    });
+    expect(bucket.failures).toBe(checked);
+  });
+
+  it("caps PIN guesses per device per day, beyond the hourly allowance", async () => {
+    const { token } = await setup();
+    const start = new Date("2026-05-01T00:00:00Z").getTime();
+    let guess = 0;
+    // Spend the hourly allowance every hour, never tripping the hourly lock.
+    for (let hour = 0; hour < 24; hour++) {
+      for (let i = 0; i < THROTTLE_RULES.device.freeAttempts; i++) {
+        const now = new Date(start + hour * 3_600_000 + i * 1000);
+        const result = await verifyPinSignIn(
+          db,
+          { pin: String(200000 + guess++), deviceToken: token },
+          { now },
+        );
+        if (!result.ok && result.reason === "LOCKED") {
+          expect(guess).toBeGreaterThan(THROTTLE_RULES.deviceDaily.freeAttempts);
+          return;
+        }
+      }
+    }
+    throw new Error("the daily PIN bucket never locked");
   });
 
   it("rejects malformed PINs without a database lookup leak", async () => {
@@ -343,19 +549,31 @@ describe("manager approvals", () => {
     expect(await db.auditLog.count({ where: { action: "approval.granted" } })).toBe(1);
   });
 
-  it("refuses an approver without the permission", async () => {
+  it("treats a PIN without the permission exactly like a wrong PIN", async () => {
     const { location } = await createLocation();
     const owner = await createUser({ role: "OWNER" });
     await createUser({ role: "CASHIER", pin: "4821", locationIds: [location.id] });
-    const { token: deviceToken } = await pairDevice(location.id, owner.id);
-    const result = await grantApproval(db, {
-      pin: "4821",
-      deviceToken,
-      permission: "pos.void",
-      scope: "sale:abc",
-      requestedById: owner.id,
+    const { device, token: deviceToken } = await pairDevice(location.id, owner.id);
+    const ask = (pin: string) =>
+      grantApproval(db, {
+        pin,
+        deviceToken,
+        permission: "pos.void",
+        scope: "sale:abc",
+        requestedById: owner.id,
+      });
+    // A cashier's real PIN and a PIN nobody has get the same answer…
+    expect(await ask("4821")).toEqual({ ok: false, reason: "INVALID" });
+    expect(await ask("9999")).toEqual({ ok: false, reason: "INVALID" });
+    // …and both count against the device.
+    const bucket = await db.authThrottle.findUniqueOrThrow({
+      where: { key: throttleKeys.device(device.id) },
     });
-    expect(result).toEqual({ ok: false, reason: "NOT_PERMITTED" });
-    expect(await db.auditLog.count({ where: { action: "approval.denied" } })).toBe(1);
+    expect(bucket.failures).toBe(2);
+    expect(
+      await db.auditLog.count({
+        where: { action: "auth.pin_failed", meta: { path: ["purpose"], equals: "approval" } },
+      }),
+    ).toBe(2);
   });
 });

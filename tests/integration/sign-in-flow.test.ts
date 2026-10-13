@@ -53,7 +53,8 @@ vi.mock("next/headers", () => {
 const { loginWithPassword, loginWithPin, logout } = await import("@/server/actions/auth");
 const { getCurrentUser } = await import("@/server/auth/session");
 const { DEVICE_COOKIE } = await import("@/server/auth/device");
-const { throttleKeys } = await import("@/server/auth/throttle");
+const { emailKey, throttleKeys } = await import("@/server/auth/throttle");
+const { KNOWN_BROWSER_COOKIE } = await import("@/server/auth/known-browser");
 const { db, resetDatabase } = await import("../support/db");
 const { createLocation, createUser, pairDevice } = await import("../support/fixtures");
 
@@ -147,6 +148,47 @@ describe("sign-in cannot be turned into an oracle", () => {
 
 describe("password sign-in", () => {
   beforeEach(setup);
+
+  it("throttles by the real client address that reached authorize()", async () => {
+    expect(await loginWithPassword({ email: "o@shop.mn", password: "wrong-password" })).toEqual({
+      ok: false,
+      error: { code: "INVALID_CREDENTIALS" },
+    });
+    const account = emailKey("o@shop.mn");
+    const keys = (await db.authThrottle.findMany({ select: { key: true } })).map((r) => r.key);
+    expect(keys).toEqual(
+      expect.arrayContaining([
+        throttleKeys.source("203.0.113.50"),
+        throttleKeys.accountFromSource(account, "203.0.113.50"),
+      ]),
+    );
+    expect(keys.some((key) => key.includes("unknown"))).toBe(false);
+
+    await expect(
+      loginWithPassword({ email: "o@shop.mn", password: PASSWORD }),
+    ).rejects.toMatchObject(redirectTo("/"));
+    const trusted = await db.trustedSignInSource.findMany({ select: { key: true } });
+    expect(trusted.map((t) => t.key)).toEqual([throttleKeys.trusted(account, "203.0.113.50")]);
+  });
+
+  it("remembers the browser after a password sign-in and uses its own bucket next time", async () => {
+    await expect(
+      loginWithPassword({ email: "o@shop.mn", password: PASSWORD }),
+    ).rejects.toMatchObject(redirectTo("/"));
+    const cookie = request.jar.get(KNOWN_BROWSER_COOKIE);
+    expect(cookie).toMatch(/^[\w-]{22}\.[\w-]{22}$/);
+    request.jar.delete(SESSION_COOKIE);
+    expect(await loginWithPassword({ email: "o@shop.mn", password: "wrong-password" })).toEqual({
+      ok: false,
+      error: { code: "INVALID_CREDENTIALS" },
+    });
+    const browserId = cookie!.split(".")[0]!;
+    expect(
+      await db.authThrottle.findUnique({
+        where: { key: throttleKeys.knownBrowser(emailKey("o@shop.mn"), browserId) },
+      }),
+    ).toMatchObject({ failures: 1 });
+  });
 
   it("never redirects off-site, whatever `next` says", async () => {
     await expect(

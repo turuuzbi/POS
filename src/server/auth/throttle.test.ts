@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emailKey, throttleSource, UNKNOWN_SOURCE } from "./throttle";
+import { emailKey, throttleNetwork, throttleSource, UNKNOWN_SOURCE } from "./throttle";
 
 describe("throttleSource", () => {
   it("keeps IPv4 addresses", () => {
@@ -25,6 +25,21 @@ describe("throttleSource", () => {
     "maps %j to the unknown bucket (bounded key size)",
     (value) => {
       expect(throttleSource(value)).toBe(UNKNOWN_SOURCE);
+    },
+  );
+});
+
+describe("throttleNetwork", () => {
+  it("groups IPv6 by /48", () => {
+    expect(throttleNetwork("2001:db8:77:1::1")).toBe("2001:db8:77::/48");
+    expect(throttleNetwork("2001:db8:77:ffff:1:2:3:4")).toBe("2001:db8:77::/48");
+    expect(throttleNetwork("2001:db8::1")).toBe("2001:db8:0::/48");
+  });
+
+  it.each([null, "203.0.113.7", "::ffff:203.0.113.7", "not-an-ip", "x".repeat(100)])(
+    "has no network bucket for %j",
+    (value) => {
+      expect(throttleNetwork(value)).toBeNull();
     },
   );
 });

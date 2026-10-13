@@ -1,13 +1,9 @@
 import "server-only";
 import { z } from "zod";
-import {
-  hasPermission,
-  type ApprovablePermission,
-  APPROVABLE_PERMISSIONS,
-} from "@/domain/permissions";
+import type { PrismaClient } from "@/generated/prisma/client";
+import { type ApprovablePermission, APPROVABLE_PERMISSIONS } from "@/domain/permissions";
 import { audit } from "../audit";
 import { deriveKey, hmacSha256, safeEqual } from "../crypto";
-import type { Db } from "../db";
 import { env } from "../env";
 import { verifyDevicePin } from "./credentials";
 
@@ -78,10 +74,12 @@ export function verifyApproval(
 
 /**
  * Verify an approver's PIN on this device and issue an approval token.
- * The approver must hold the permission and have access to the device's location.
+ * The approver must hold the permission and have access to the device's
+ * location. A PIN that belongs to someone without the permission is treated
+ * — counted and answered — exactly like a wrong PIN (see verifyDevicePin).
  */
 export async function grantApproval(
-  client: Db,
+  client: PrismaClient,
   input: {
     pin: string;
     deviceToken: string | null;
@@ -92,29 +90,15 @@ export async function grantApproval(
   ctx: { now?: Date; ip?: string | null; userAgent?: string | null } = {},
 ): Promise<
   | { ok: true; token: string; approverName: string }
-  | { ok: false; reason: "INVALID" | "DEVICE_REQUIRED" | "LOCKED" | "NOT_PERMITTED" }
+  | { ok: false; reason: "INVALID" | "DEVICE_REQUIRED" | "LOCKED" }
 > {
   const result = await verifyDevicePin(
     client,
-    { pin: input.pin, deviceToken: input.deviceToken },
+    { pin: input.pin, deviceToken: input.deviceToken, requiredPermission: input.permission },
     ctx,
   );
   if (!result.ok) return result;
   const { user, device } = result;
-  if (!hasPermission(user.role, input.permission)) {
-    await audit(client, {
-      actorId: user.id,
-      action: "approval.denied",
-      entityType: "Approval",
-      entityId: input.scope,
-      locationId: device.locationId,
-      registerId: device.registerId,
-      meta: { permission: input.permission, requestedById: input.requestedById },
-      ip: ctx.ip,
-      userAgent: ctx.userAgent,
-    });
-    return { ok: false, reason: "NOT_PERMITTED" };
-  }
   const token = signApproval(
     { approverId: user.id, permission: input.permission, scope: input.scope, deviceId: device.id },
     ctx.now,

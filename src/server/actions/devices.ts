@@ -10,7 +10,7 @@ import {
   readDeviceToken,
   setDeviceCookie,
 } from "../auth/device";
-import { clearThrottle, throttleKeys } from "../auth/throttle";
+import { clearThrottle, deviceThrottleKeys } from "../auth/throttle";
 import { db } from "../db";
 import { ActionError, assertCan, defineAction } from "./define-action";
 
@@ -101,7 +101,7 @@ export const unlockDevicePin = defineAction({
     if (!device) throw new ActionError("NOT_FOUND");
     assertCan(user, "devices.manage", device.locationId);
     await db.$transaction(async (tx) => {
-      await clearThrottle(tx, [throttleKeys.device(device.id)]);
+      await clearThrottle(tx, deviceThrottleKeys(device.id));
       await audit(tx, {
         actorId: user.id,
         action: "device.unlock_pin",

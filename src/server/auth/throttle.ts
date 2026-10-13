@@ -1,9 +1,10 @@
 import "server-only";
 import { isIP } from "node:net";
+import type { PrismaClient } from "@/generated/prisma/client";
 import { deriveKey, hmacSha256 } from "../crypto";
 import type { Db } from "../db";
 import { env } from "../env";
-import { lockUntilAfterFailure, type ThrottleRule } from "./lockout";
+import { LONGEST_WINDOW_MS, lockUntilAfterFailure, type ThrottleRule } from "./lockout";
 
 /** Source bucket for requests whose client address is missing or malformed. */
 export const UNKNOWN_SOURCE = "unknown";
@@ -19,11 +20,27 @@ export function throttleSource(ip: string | null | undefined): string {
   if (!value || value.length > 64) return UNKNOWN_SOURCE;
   const version = isIP(value);
   if (version === 4) return value;
-  if (version === 6) return ipv6Prefix64(value);
+  if (version === 6) {
+    const groups = ipv6Groups(value);
+    return typeof groups === "string" ? groups : `${groups.slice(0, 4).join(":")}::/64`;
+  }
   return UNKNOWN_SOURCE;
 }
 
-function ipv6Prefix64(address: string): string {
+/**
+ * The IPv6 /48 a client address belongs to, or null for IPv4 and unknown
+ * sources. An attacker with a routed /48 has 65,536 /64s to rotate through;
+ * this coarser bucket bounds them together.
+ */
+export function throttleNetwork(ip: string | null | undefined): string | null {
+  const value = ip?.trim();
+  if (!value || value.length > 64 || isIP(value) !== 6) return null;
+  const groups = ipv6Groups(value);
+  return typeof groups === "string" ? null : `${groups.slice(0, 3).join(":")}::/48`;
+}
+
+/** The eight hextets of an IPv6 literal, or the IPv4 address it maps. */
+function ipv6Groups(address: string): string[] | string {
   const plain = address.split("%")[0]!.toLowerCase();
   const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(plain);
   if (mapped?.[1]) return mapped[1];
@@ -41,11 +58,8 @@ function ipv6Prefix64(address: string): string {
   const groups =
     tail === undefined
       ? front
-      : [...front, ...Array(8 - front.length - back.length).fill("0"), ...back];
-  return `${groups
-    .slice(0, 4)
-    .map((g: string) => parseInt(g || "0", 16).toString(16))
-    .join(":")}::/64`;
+      : [...front, ...Array<string>(8 - front.length - back.length).fill("0"), ...back];
+  return groups.map((g) => parseInt(g || "0", 16).toString(16));
 }
 
 /**
@@ -60,95 +74,155 @@ export function emailKey(email: string): string {
 /** Throttle bucket keys (see the AuthThrottle model). */
 export const throttleKeys = {
   source: (source: string) => `pw:src:${source}`,
+  network: (network: string) => `pw:net:${network}`,
   account: (email: string) => `pw:acct:${email}`,
   accountFromSource: (email: string, source: string) => `pw:acct-src:${email}:${source}`,
+  knownBrowser: (email: string, browserId: string) => `pw:acct-br:${email}:${browserId}`,
   device: (deviceId: string) => `pin:dev:${deviceId}`,
+  deviceDaily: (deviceId: string) => `pin:dev-day:${deviceId}`,
   trusted: (email: string, source: string) => `${email}:${source}`,
 };
 
-export interface ThrottleState {
-  locked: Set<string>;
-  trusted: boolean;
+/** Every bucket that throttles PIN entry on a device. */
+export function deviceThrottleKeys(deviceId: string): string[] {
+  return [throttleKeys.device(deviceId), throttleKeys.deviceDaily(deviceId)];
 }
 
-/** Which of these buckets are locked, and is this a trusted source — in one round trip. */
-export async function throttleState(
-  client: Db,
-  keys: string[],
-  trustedKey: string | null,
-  now: Date,
-): Promise<ThrottleState> {
-  const rows = await client.$queryRaw<{ key: string; locked: boolean; trusted: boolean }[]>`
-    SELECT "key", COALESCE("lockedUntil" > ${now}, false) AS "locked", false AS "trusted"
-      FROM "AuthThrottle" WHERE "key" = ANY(${keys}::text[])
-    UNION ALL
-    SELECT "key", false AS "locked", true AS "trusted"
-      FROM "TrustedSignInSource" WHERE "key" = ${trustedKey ?? ""}`;
-  return {
-    locked: new Set(rows.filter((r) => r.locked).map((r) => r.key)),
-    trusted: rows.some((r) => r.trusted),
-  };
+export interface ThrottleBucket {
+  key: string;
+  rule: ThrottleRule;
+  /** Whether an active lock on this bucket refuses the attempt (it is counted either way). */
+  enforce: boolean;
 }
 
-export async function isThrottled(client: Db, keys: string[], now: Date): Promise<boolean> {
-  return (await throttleState(client, keys, null, now)).locked.size > 0;
+interface CountedBucket {
+  /** Window the attempt was counted in; a refund only applies within it. */
+  windowStart: Date;
+  /** The lock this attempt set, and what it replaced, so a refund can undo exactly that. */
+  setLock: { lockedUntil: Date; previous: Date | null } | null;
+  failures: number;
+}
+
+export interface Reservation {
+  allowed: boolean;
+  /** Enforced buckets whose active lock refused the attempt. */
+  refusedBy: Set<string>;
+  /** Buckets this attempt was counted on. */
+  counted: Map<string, CountedBucket>;
 }
 
 /**
- * Count one failure on each bucket atomically (one statement, so a failure
- * can't be recorded on some buckets and not others) and lock the buckets
- * that exceed their rule. Failures are counted in fixed windows: a new
- * window starts once the previous one is over, so a slow drip can't keep
- * escalating — and an active lock is never cut short.
+ * Count one attempt on each bucket BEFORE the credential is checked, and
+ * decide whether it may be checked at all.
+ *
+ * One transaction locks the bucket rows (in key order, so concurrent
+ * reservations can't deadlock), applies the fixed-window rules and writes the
+ * new counts and locks. A burst of parallel attempts is therefore serialised:
+ * each sees the attempts before it, and at most `freeAttempts + 1` of them
+ * are checked before the lock refuses the rest. Locks are only ever extended
+ * here, never shortened.
+ *
+ * Refused attempts are counted on the refusing buckets only (extending their
+ * lock) unless `countRefused` is false; a correct credential later refunds
+ * its own attempt with `settleSuccess`.
  */
-export async function recordFailures(
-  client: Db,
-  entries: { key: string; rule: ThrottleRule }[],
+export async function reserveAttempt(
+  client: PrismaClient,
+  buckets: ThrottleBucket[],
   now: Date,
-): Promise<Map<string, { failures: number; lockedUntil: Date | null }>> {
-  const result = new Map<string, { failures: number; lockedUntil: Date | null }>();
-  const byWindow = new Map<number, typeof entries>();
-  for (const entry of entries) {
-    byWindow.set(entry.rule.windowMs, [...(byWindow.get(entry.rule.windowMs) ?? []), entry]);
-  }
-  for (const [windowMs, group] of byWindow) {
-    const cutoff = new Date(now.getTime() - windowMs);
-    const keys = group.map((entry) => entry.key);
-    const rows = await client.$queryRaw<
-      { key: string; failures: number; lockedUntil: Date | null }[]
-    >`
+  options: { countRefused?: boolean } = {},
+): Promise<Reservation> {
+  const byKey = new Map(buckets.map((bucket) => [bucket.key, bucket]));
+  const keys = [...byKey.keys()].sort();
+  return client.$transaction(async (tx) => {
+    await tx.$executeRaw`
       INSERT INTO "AuthThrottle" ("key", "failures", "windowStart", "lastFailureAt")
-      SELECT k, 1, ${now}, ${now} FROM unnest(${keys}::text[]) AS k
-      ON CONFLICT ("key") DO UPDATE SET
-        "failures" = CASE WHEN "AuthThrottle"."windowStart" < ${cutoff}
-                          THEN 1 ELSE "AuthThrottle"."failures" + 1 END,
-        "lockedUntil" = CASE
-          WHEN "AuthThrottle"."windowStart" < ${cutoff}
-               AND ("AuthThrottle"."lockedUntil" IS NULL OR "AuthThrottle"."lockedUntil" <= ${now})
-          THEN NULL ELSE "AuthThrottle"."lockedUntil" END,
-        "windowStart" = CASE WHEN "AuthThrottle"."windowStart" < ${cutoff}
-                             THEN ${now} ELSE "AuthThrottle"."windowStart" END,
-        "lastFailureAt" = ${now}
-      RETURNING "key", "failures", "lockedUntil"`;
-    for (const row of rows) {
-      const rule = group.find((entry) => entry.key === row.key)!.rule;
-      const failures = Number(row.failures);
-      const proposed = lockUntilAfterFailure(failures, now, rule);
-      const existing = row.lockedUntil ? new Date(row.lockedUntil) : null;
-      // Never shorten an active lock.
-      const lockedUntil =
-        proposed && (!existing || proposed > existing) ? proposed : (existing ?? null);
-      if (proposed && lockedUntil === proposed) {
-        await client.authThrottle.update({ where: { key: row.key }, data: { lockedUntil } });
-      }
-      result.set(row.key, { failures, lockedUntil });
+      SELECT k, 0, ${now}, ${now} FROM unnest(${keys}::text[]) AS k ORDER BY k
+      ON CONFLICT ("key") DO NOTHING`;
+    await tx.$queryRaw`
+      SELECT "key" FROM "AuthThrottle" WHERE "key" = ANY(${keys}::text[])
+      ORDER BY "key" FOR UPDATE`;
+    const rows = await tx.authThrottle.findMany({ where: { key: { in: keys } } });
+    const state = new Map(
+      rows.map((row) => {
+        const rule = byKey.get(row.key)!.rule;
+        const expired = row.windowStart.getTime() <= now.getTime() - rule.windowMs;
+        const active = row.lockedUntil && row.lockedUntil > now ? row.lockedUntil : null;
+        return [
+          row.key,
+          {
+            // A new window starts the count afresh — but never cuts short an active lock.
+            failures: expired ? 0 : row.failures,
+            windowStart: expired ? now : row.windowStart,
+            active,
+          },
+        ];
+      }),
+    );
+
+    const refusedBy = new Set(
+      keys.filter((key) => byKey.get(key)!.enforce && state.get(key)?.active),
+    );
+    const allowed = refusedBy.size === 0;
+    const toCount = allowed ? keys : options.countRefused === false ? [] : [...refusedBy];
+
+    const counted = new Map<string, CountedBucket>();
+    for (const key of toCount) {
+      const current = state.get(key)!;
+      const failures = current.failures + 1;
+      const proposed = lockUntilAfterFailure(failures, now, byKey.get(key)!.rule);
+      const setLock =
+        proposed && (!current.active || proposed > current.active)
+          ? { lockedUntil: proposed, previous: current.active }
+          : null;
+      await tx.authThrottle.update({
+        where: { key },
+        data: {
+          failures,
+          windowStart: current.windowStart,
+          lockedUntil: setLock?.lockedUntil ?? current.active,
+          lastFailureAt: now,
+        },
+      });
+      counted.set(key, { windowStart: current.windowStart, failures, setLock });
     }
-  }
-  return result;
+    return { allowed, refusedBy, counted };
+  });
 }
 
-export async function clearThrottle(client: Db, keys: string[]): Promise<void> {
-  if (keys.length > 0) await client.authThrottle.deleteMany({ where: { key: { in: keys } } });
+/**
+ * After a correct credential: take back this attempt's own count (and any
+ * lock it set) on every bucket it was counted on, and delete `clear`
+ * outright. Other attempts' counts are untouched, so a success can't wipe
+ * out failures someone else caused.
+ */
+export async function settleSuccess(
+  client: PrismaClient,
+  reservation: Reservation,
+  clear: string[] = [],
+): Promise<void> {
+  const refunds = [...reservation.counted].filter(([key]) => !clear.includes(key));
+  await client.$transaction([
+    ...refunds.flatMap(([key, counted]) => [
+      client.authThrottle.updateMany({
+        where: { key, windowStart: counted.windowStart, failures: { gt: 0 } },
+        data: { failures: { decrement: 1 } },
+      }),
+      ...(counted.setLock
+        ? [
+            client.authThrottle.updateMany({
+              where: { key, lockedUntil: counted.setLock.lockedUntil },
+              data: { lockedUntil: counted.setLock.previous },
+            }),
+          ]
+        : []),
+    ]),
+    client.authThrottle.deleteMany({ where: { key: { in: clear } } }),
+  ]);
+}
+
+export async function isTrustedSource(client: Db, key: string): Promise<boolean> {
+  return (await client.trustedSignInSource.count({ where: { key } })) > 0;
 }
 
 export async function markTrustedSource(client: Db, key: string, now: Date): Promise<void> {
@@ -159,12 +233,53 @@ export async function markTrustedSource(client: Db, key: string, now: Date): Pro
   });
 }
 
-/** Locked device buckets, for the devices screen. */
+export async function clearThrottle(client: Db, keys: string[]): Promise<void> {
+  if (keys.length > 0) await client.authThrottle.deleteMany({ where: { key: { in: keys } } });
+}
+
+/** Clear every password bucket of one account (recovery: `pnpm auth:unlock <email>`). */
+export async function clearAccountThrottle(client: Db, email: string): Promise<number> {
+  const account = emailKey(email);
+  const { count } = await client.authThrottle.deleteMany({
+    where: {
+      OR: [
+        { key: throttleKeys.account(account) },
+        { key: { startsWith: `pw:acct-src:${account}:` } },
+        { key: { startsWith: `pw:acct-br:${account}:` } },
+      ],
+    },
+  });
+  return count;
+}
+
+/** How long a trusted source stays trusted without a sign-in from it. */
+export const TRUSTED_SOURCE_TTL_MS = 180 * 24 * 60 * 60 * 1000;
+
+/**
+ * Delete sign-in state that can no longer matter: buckets idle for longer
+ * than any window with no active lock, stale trusted sources and revoked
+ * sessions past their expiry. Keeps the tables bounded however many
+ * made-up emails or addresses an attacker throws at the sign-in form.
+ */
+export async function pruneAuthState(client: Db, now: Date): Promise<void> {
+  await client.authThrottle.deleteMany({
+    where: {
+      lastFailureAt: { lt: new Date(now.getTime() - LONGEST_WINDOW_MS) },
+      OR: [{ lockedUntil: null }, { lockedUntil: { lte: now } }],
+    },
+  });
+  await client.trustedSignInSource.deleteMany({
+    where: { lastSeenAt: { lt: new Date(now.getTime() - TRUSTED_SOURCE_TTL_MS) } },
+  });
+  await client.revokedSession.deleteMany({ where: { expiresAt: { lt: now } } });
+}
+
+/** Locked devices (either PIN bucket), for the devices screen. */
 export async function lockedDeviceIds(client: Db, deviceIds: string[], now: Date) {
   if (deviceIds.length === 0) return new Set<string>();
   const rows = await client.authThrottle.findMany({
-    where: { key: { in: deviceIds.map(throttleKeys.device) }, lockedUntil: { gt: now } },
+    where: { key: { in: deviceIds.flatMap(deviceThrottleKeys) }, lockedUntil: { gt: now } },
     select: { key: true },
   });
-  return new Set(rows.map((row) => row.key.slice("pin:dev:".length)));
+  return new Set(rows.map((row) => row.key.slice(row.key.indexOf(":", 4) + 1)));
 }
