@@ -148,6 +148,39 @@ export interface ApprovalRequirement {
   permission: "pos.price_override" | "pos.discount.manual";
   scope: "LINE" | "CART";
   lineId?: string;
+  /**
+   * Canonical text of exactly what is being approved (override price, or the
+   * discount's kind and value; fixed amounts also carry the base they apply to,
+   * since the same amount on a smaller base is a bigger rate).
+   */
+  value: string;
+}
+
+export function discountApprovalValue(request: DiscountRequest, base: Money): string {
+  return request.kind === "PERCENT"
+    ? `pct:${request.percentBps}`
+    : `fixed:${request.amount.toString()}@${base.toString()}`;
+}
+
+/**
+ * The scope a manager approval token must carry:
+ * `<saleId>:<key>:<value>`. Checkout recomputes it from the server-side cart
+ * and accepts nothing else, so a token never covers a different line, a
+ * larger discount or another price.
+ */
+export function approvalScope(
+  saleId: string,
+  requirement: Pick<ApprovalRequirement, "key" | "value">,
+): string {
+  return `${saleId}:${requirement.key}:${requirement.value}`;
+}
+
+/** Shape of every scope `approvalScope` can produce (a bare sale id never matches). */
+const APPROVAL_SCOPE_SHAPE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:(?:line:[^:\s]+:(?:price|discount:\d+)|cart:discount:\d+):(?:price:\d+|pct:\d+|fixed:\d+@\d+)$/i;
+
+export function isApprovalScope(scope: string): boolean {
+  return APPROVAL_SCOPE_SHAPE.test(scope);
 }
 
 export const approvalKeys = {

@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DialogFooter } from "@/components/ui/dialog";
-import type { ApprovalRequirement } from "@/domain/discounts";
+import { approvalScope, type ApprovalRequirement } from "@/domain/discounts";
 import type { ApprovalGrant } from "@/lib/pos/pos-state";
 import { requestApproval } from "@/server/actions/auth";
 import { KeypadField } from "./keypad";
@@ -16,8 +16,9 @@ const PIN_MAX = 8;
 
 /**
  * A manager types their PIN on this device. One PIN approves every pending
- * requirement: the server issues one token per requirement, bound to the sale
- * and the requirement key (`<saleId>:<key>`), which checkout verifies.
+ * requirement: the server issues one token per requirement, bound to the sale,
+ * the requirement key and the approved value (`approvalScope`), which checkout
+ * recomputes and verifies.
  */
 export function ApprovalDialog({
   open,
@@ -35,7 +36,8 @@ export function ApprovalDialog({
   fingerprintOf: (requirement: ApprovalRequirement) => string;
   /** Short human text for a requirement ("Price change: Coffee"). */
   describe: (requirement: ApprovalRequirement) => string;
-  onGranted: (grants: Record<string, ApprovalGrant>) => void;
+  /** `complete`: every pending requirement was granted. */
+  onGranted: (grants: Record<string, ApprovalGrant>, complete: boolean) => void;
 }) {
   const t = useTranslations("pos.approval");
   const te = useTranslations("errors");
@@ -54,7 +56,7 @@ export function ApprovalDialog({
         const result = await requestApproval({
           pin,
           permission: requirement.permission,
-          scope: `${saleId}:${requirement.key}`,
+          scope: approvalScope(saleId, requirement),
         });
         if (!result.ok) {
           setError(
@@ -63,8 +65,9 @@ export function ApprovalDialog({
               : te(result.error.code),
           );
           setPin("");
-          // Keep what was already granted: the manager need not re-approve it.
-          if (Object.keys(grants).length) onGranted(grants);
+          // Keep what was already granted (the manager need not re-approve it) but
+          // stay open on the error: the parent advances only when none is pending.
+          if (Object.keys(grants).length) onGranted(grants, false);
           return;
         }
         grants[requirement.key] = {
@@ -74,7 +77,7 @@ export function ApprovalDialog({
           grantedAt: Date.now(),
         };
       }
-      onGranted(grants);
+      onGranted(grants, true);
     } catch {
       setError(te("INTERNAL"));
     } finally {

@@ -2,7 +2,7 @@ import { v7 as uuidv7 } from "uuid";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { computeTotals, type CatalogSnapshot } from "@/domain/cart";
 import { checkoutCodeFromFailure } from "@/domain/checkout-failure";
-import { approvalKeys } from "@/domain/discounts";
+import { approvalKeys, approvalScope } from "@/domain/discounts";
 import { buildScaleBarcode } from "@/domain/scale-barcode";
 import { units } from "@/domain/qty";
 import { markMockInvoicePaid } from "@/server/adapters/payments";
@@ -345,6 +345,10 @@ describe("checkoutSale", () => {
   });
 
   describe("approvals", () => {
+    const priceScope = (saleId: string, lineId: string, price: string) =>
+      approvalScope(saleId, { key: approvalKeys.linePrice(lineId), value: `price:${price}` });
+    const discountScope = (saleId: string, lineId: string, value: string, i = 0) =>
+      approvalScope(saleId, { key: approvalKeys.lineDiscount(lineId, i), value });
     const overrideLine = (variantId: string) => lineOf(variantId, 1000, { priceOverride: "80000" });
 
     it("requires approval for a cashier's price override", async () => {
@@ -367,7 +371,7 @@ describe("checkoutSale", () => {
       const token = signApproval({
         approverId: till.manager.id,
         permission: "pos.price_override",
-        scope: saleId,
+        scope: priceScope(saleId, line.lineId, "80000"),
         deviceId: till.device.id,
       });
       const input = buildInput({
@@ -398,7 +402,7 @@ describe("checkoutSale", () => {
         signApproval({
           approverId: till.manager.id,
           permission: "pos.price_override",
-          scope: saleId,
+          scope: priceScope(saleId, line.lineId, "80000"),
           deviceId: till.device.id,
           ...claims,
         });
@@ -427,6 +431,59 @@ describe("checkoutSale", () => {
         "APPROVAL_INVALID",
       );
       expect(await db.sale.count()).toBe(0);
+    });
+
+    it("rejects a token reused for a larger discount, another line, a bare sale id or another price", async () => {
+      const till = await createTill();
+      const { variant } = await createStockedProduct(till);
+      const { variant: variantB } = await createStockedProduct(till);
+      const saleId = uuidv7();
+      const sign = (scope: string) =>
+        signApproval({
+          approverId: till.manager.id,
+          permission: "pos.discount.manual",
+          scope,
+          deviceId: till.device.id,
+        });
+      const lineA = lineOf(variant.id, 1000, {
+        discounts: [{ kind: "PERCENT", percentBps: 1500 }],
+      });
+      const lineB = lineOf(variantB.id, 1000, {
+        discounts: [{ kind: "PERCENT", percentBps: 1500 }],
+      });
+      const big = lineOf(variant.id, 1000, { discounts: [{ kind: "PERCENT", percentBps: 5000 }] });
+      big.lineId = lineA.lineId;
+      const keyA = approvalKeys.lineDiscount(lineA.lineId, 0);
+      const keyB = approvalKeys.lineDiscount(lineB.lineId, 0);
+      const tokenA = sign(discountScope(saleId, lineA.lineId, "pct:1500"));
+      const attempt = (
+        lines: (typeof lineA)[],
+        approvals: Record<string, string>,
+        payable: string,
+      ) =>
+        checkoutSale(
+          buildInput({
+            saleId,
+            lines,
+            expectedPayable: payable,
+            approvals,
+            tenders: [{ method: "CASH", amount: payable }],
+          }),
+          till.ctx(),
+        );
+      // 15% token reused at 50%
+      expect(await failure(attempt([big], { [keyA]: tokenA }, "50000"))).toBe("APPROVAL_INVALID");
+      // line A's token presented for line B
+      expect(
+        await failure(attempt([lineA, lineB], { [keyA]: tokenA, [keyB]: tokenA }, "170000")),
+      ).toBe("APPROVAL_INVALID");
+      // bare sale id scope
+      expect(await failure(attempt([lineA], { [keyA]: sign(saleId) }, "85000"))).toBe(
+        "APPROVAL_INVALID",
+      );
+      // exact match is accepted
+      const ok = await attempt([lineA], { [keyA]: tokenA }, "85000");
+      expect(ok.totals.payable).toBe(85_000n);
     });
 
     it("lets a manager override and discount without a token", async () => {

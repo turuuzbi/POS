@@ -20,6 +20,7 @@ import {
   isValidDiscountRequest,
   type ApprovalPolicy,
   type ApprovalRequirement,
+  discountApprovalValue,
   type DiscountRequest,
 } from "./discounts";
 import { MAX_MONEY } from "./catalog";
@@ -557,6 +558,7 @@ export function requiredApprovals(
         permission: "pos.price_override",
         scope: "LINE",
         lineId: line.lineId,
+        value: `price:${line.priceOverride.toString()}`,
       });
     }
     (lineStepBases.get(line.lineId) ?? []).forEach((step, i) => {
@@ -567,6 +569,7 @@ export function requiredApprovals(
           permission: "pos.discount.manual",
           scope: "LINE",
           lineId: line.lineId,
+          value: discountApprovalValue(step.request, step.base),
         });
       }
     });
@@ -578,6 +581,7 @@ export function requiredApprovals(
         kind: "DISCOUNT",
         permission: "pos.discount.manual",
         scope: "CART",
+        value: discountApprovalValue(step.request, step.base),
       });
     }
   });

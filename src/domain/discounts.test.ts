@@ -4,6 +4,9 @@ import {
   allocateCartDiscount,
   applyCartDiscounts,
   applyDiscountsSequentially,
+  approvalScope,
+  discountApprovalValue,
+  isApprovalScope,
   discountNeedsApproval,
   isValidDiscountRequest,
   resolveDiscount,
@@ -116,5 +119,36 @@ describe("discountNeedsApproval", () => {
   it("threshold is configurable", () => {
     expect(discountNeedsApproval(pct(500), 1000n, { maxDiscountBpsWithoutApproval: 0 })).toBe(true);
     expect(DEFAULT_APPROVAL_POLICY.maxDiscountBpsWithoutApproval).toBe(1000);
+  });
+});
+
+describe("approval scope", () => {
+  const saleId = "01968b2a-7c3e-7f00-8000-000000000001";
+  const req = (key: string, value: string) => ({
+    key,
+    value,
+    kind: "DISCOUNT" as const,
+    permission: "pos.discount.manual" as const,
+    scope: "LINE" as const,
+  });
+
+  it("binds sale, key and approved value", () => {
+    const value = discountApprovalValue({ kind: "PERCENT", percentBps: 1500 }, 100n);
+    const a = approvalScope(saleId, req("line:L1:discount:0", value));
+    expect(a).toBe(`${saleId}:line:L1:discount:0:pct:1500`);
+    expect(isApprovalScope(a)).toBe(true);
+    expect(a).not.toBe(approvalScope(saleId, req("line:L1:discount:0", "pct:10000")));
+    expect(a).not.toBe(approvalScope(saleId, req("line:L2:discount:0", "pct:1500")));
+  });
+
+  it("fixed amounts carry their base", () => {
+    expect(discountApprovalValue({ kind: "FIXED", amount: 500n }, 2000n)).toBe("fixed:500@2000");
+  });
+
+  it("rejects a bare sale id and malformed scopes", () => {
+    expect(isApprovalScope(saleId)).toBe(false);
+    expect(isApprovalScope(`${saleId}:line:L1:discount:0`)).toBe(false);
+    expect(isApprovalScope(`${saleId}:cart:discount:0:pct:1500`)).toBe(true);
+    expect(isApprovalScope(`${saleId}:line:L1:price:price:8000`)).toBe(true);
   });
 });

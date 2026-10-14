@@ -64,7 +64,7 @@ const grant = (state: PosState, key: string, at = 1000): ApprovalGrant => {
   ).find((r) => r.key === key)!;
   return {
     token: `token-${key}`,
-    fingerprint: approvalFingerprint(state.cart, requirement),
+    fingerprint: approvalFingerprint(requirement),
     approverName: "Manager",
     grantedAt: at,
   };

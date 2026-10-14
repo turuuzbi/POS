@@ -21,7 +21,7 @@ import {
   type CheckoutInput,
   type CheckoutResult,
 } from "@/domain/checkout-contract";
-import { DEFAULT_APPROVAL_POLICY, approvalKeys } from "@/domain/discounts";
+import { DEFAULT_APPROVAL_POLICY, approvalKeys, approvalScope } from "@/domain/discounts";
 import { hasPermission, type ApprovablePermission } from "@/domain/permissions";
 import {
   DEFAULT_SCALE_RULES,
@@ -599,7 +599,12 @@ async function resolveApprovals(
     }
     const token = input.approvals[req.key];
     if (!token) throw new CheckoutFailure("APPROVAL_REQUIRED", { key: req.key });
-    const claims = verifyApprovalToken(token, req.permission, input.saleId, req.key, ctx);
+    const claims = verifyApprovalToken(
+      token,
+      req.permission,
+      approvalScope(input.saleId, req),
+      ctx,
+    );
     if (!claims) throw new CheckoutFailure("APPROVAL_INVALID", { key: req.key });
     const approver = await tx.user.findUnique({
       where: { id: claims.approverId },
@@ -627,15 +632,10 @@ async function resolveApprovals(
 function verifyApprovalToken(
   token: string,
   permission: ApprovablePermission,
-  saleId: string,
-  key: string,
+  scope: string,
   ctx: CheckoutContext,
 ) {
-  const base = { permission, deviceId: ctx.device.deviceId };
-  return (
-    verifyApproval(token, { ...base, scope: saleId }, ctx.now) ??
-    verifyApproval(token, { ...base, scope: `${saleId}:${key}` }, ctx.now)
-  );
+  return verifyApproval(token, { permission, deviceId: ctx.device.deviceId, scope }, ctx.now);
 }
 
 /**

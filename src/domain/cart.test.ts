@@ -301,6 +301,7 @@ describe("requiredApprovals", () => {
         permission: "pos.price_override",
         scope: "LINE",
         lineId: "a",
+        value: "price:300000",
       },
     ]);
     const same = run([{ type: "SET_PRICE_OVERRIDE", lineId: "a", price: T(3300) }], cart);

@@ -666,9 +666,10 @@ function Selling({
           saleId={state.saleId}
           pending={pending}
           describe={describe}
-          fingerprintOf={(requirement) => approvalFingerprint(state.cart, requirement)}
-          onGranted={(grants) => {
+          fingerprintOf={(requirement) => approvalFingerprint(requirement)}
+          onGranted={(grants, complete) => {
             dispatch({ type: "approve", grants });
+            if (!complete) return;
             if (dialog.thenCharge) setDialog({ type: "tender" });
             else closeDialog();
           }}

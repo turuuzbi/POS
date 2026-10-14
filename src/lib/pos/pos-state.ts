@@ -67,20 +67,8 @@ export function cartSettings(config: Pick<PosConfig, "totalRoundingUnit">): Cart
 }
 
 /** What a requirement is about, for detecting that the approved thing changed. */
-export function approvalFingerprint(cart: Cart, requirement: ApprovalRequirement): string {
-  if (requirement.kind === "PRICE_OVERRIDE") {
-    const line = cart.lines.find((l) => l.lineId === requirement.lineId);
-    return `price:${line?.priceOverride?.toString() ?? ""}`;
-  }
-  const index = Number(/:discount:(\d+)$/.exec(requirement.key)?.[1]);
-  const discount =
-    requirement.scope === "CART"
-      ? cart.discounts[index]
-      : cart.lines.find((l) => l.lineId === requirement.lineId)?.discounts[index];
-  if (!discount) return "";
-  return discount.kind === "PERCENT"
-    ? `pct:${discount.percentBps}`
-    : `fixed:${discount.amount.toString()}`;
+export function approvalFingerprint(requirement: ApprovalRequirement): string {
+  return requirement.value;
 }
 
 function safeRequirements(state: PosState, config: PosConfig): ApprovalRequirement[] {
@@ -103,7 +91,7 @@ function pruneApprovals(state: PosState, config: PosConfig): PosState {
   const kept: Record<string, ApprovalGrant> = {};
   for (const [key, grant] of Object.entries(state.approvals)) {
     const requirement = requirements.get(key);
-    if (requirement && approvalFingerprint(state.cart, requirement) === grant.fingerprint) {
+    if (requirement && approvalFingerprint(requirement) === grant.fingerprint) {
       kept[key] = grant;
     }
   }
@@ -196,7 +184,7 @@ export function pendingApprovals(
     const grant = state.approvals[requirement.key];
     return !(
       grant &&
-      grant.fingerprint === approvalFingerprint(state.cart, requirement) &&
+      grant.fingerprint === approvalFingerprint(requirement) &&
       now - grant.grantedAt < APPROVAL_CLIENT_TTL_MS
     );
   });
