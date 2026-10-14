@@ -90,7 +90,10 @@ export function ImageField({
           type="file"
           accept={ACCEPT}
           className="sr-only"
-          aria-describedby="pf-image-hint pf-image-error"
+          // The visible button drives this input; keep the unnamed native control out of
+          // the tab order and the accessibility tree.
+          tabIndex={-1}
+          aria-hidden="true"
           onChange={(e) => {
             choose(e.target.files?.[0]);
             e.target.value = ""; // allow picking the same file again

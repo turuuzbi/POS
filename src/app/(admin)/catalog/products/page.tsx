@@ -83,6 +83,10 @@ export default async function ProductsPage({ searchParams }: { searchParams: Sea
       />
 
       <form
+        // The filter submits as a plain GET (a full page load). Without autoComplete="off",
+        // Back restores what was typed before submitting, so the controls would disagree
+        // with the results shown.
+        autoComplete="off"
         method="get"
         action="/catalog/products"
         role="search"

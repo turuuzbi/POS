@@ -64,7 +64,14 @@ export function CategoryDialog({
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
-        if (!next) reset();
+        reset();
+        if (next) {
+          // Start from the stored values: an abandoned edit must not linger.
+          setName(category?.name ?? "");
+          setParentId(category?.parentId ?? "");
+          setColor(category?.color ?? "");
+          setSortOrder(String(category?.sortOrder ?? 0));
+        }
       }}
     >
       <DialogTrigger asChild>{trigger}</DialogTrigger>
