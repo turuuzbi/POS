@@ -17,6 +17,7 @@ export const NAV_SECTIONS = [
     items: [
       { key: "products", href: "/catalog/products", permission: "catalog.view" },
       { key: "categories", href: "/catalog/categories", permission: "catalog.view" },
+      { key: "quickKeys", href: "/catalog/quick-keys", permission: "catalog.edit" },
       { key: "importExport", href: "/catalog/import-export", permission: "catalog.edit" },
     ],
   },
