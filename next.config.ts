@@ -22,6 +22,8 @@ const nextConfig: NextConfig = {
   // dynamic, and the checkout itself runs client-side (IndexedDB, offline).
   cacheComponents: false,
   poweredByHeader: false,
+  // The catalog CSV import posts the file (up to 2 MB) to a server action.
+  experimental: { serverActions: { bodySizeLimit: "3mb" } },
   turbopack: {
     rules: {
       "*.css": {
