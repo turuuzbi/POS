@@ -34,11 +34,13 @@ describe("r2 storage", () => {
     vi.stubGlobal("fetch", fetchMock);
     const url = await createR2Storage(CONFIG).put(KEY, Uint8Array.from([1, 2]), "image/png");
     expect(url).toBe(`https://img.example.com/${KEY}`);
-    const request = fetchMock.mock.calls[0]![0] as Request;
-    expect(request.method).toBe("PUT");
-    expect(request.url).toBe(`https://acc123.r2.cloudflarestorage.com/pos-images/${KEY}`);
-    expect(request.headers.get("authorization")).toMatch(/^AWS4-HMAC-SHA256 .*\/auto\/s3\//);
-    expect(request.headers.get("content-type")).toBe("image/png");
+    const [requestUrl, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
+    const headers = new Headers(init.headers);
+    expect(init.method).toBe("PUT");
+    expect(requestUrl).toBe(`https://acc123.r2.cloudflarestorage.com/pos-images/${KEY}`);
+    expect(headers.get("authorization")).toMatch(/^AWS4-HMAC-SHA256 .*\/auto\/s3\//);
+    expect(headers.get("content-type")).toBe("image/png");
+    expect(headers.get("content-length")).toBe("2");
   });
 
   it("surfaces upload failures and rejects bad keys", async () => {

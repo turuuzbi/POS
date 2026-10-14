@@ -9,6 +9,8 @@ export interface R2Config {
   bucket: string;
   /** Public base URL of the bucket (custom domain or r2.dev), no trailing slash. */
   publicUrl: string;
+  /** Override the S3 endpoint (tests); defaults to the account's R2 endpoint. */
+  endpoint?: string;
 }
 
 /** R2 settings from the environment, or null when any is missing (use local disk). */
@@ -35,18 +37,26 @@ export function createR2Storage(config: R2Config): StorageProvider {
     region: "auto",
   });
   const objectUrl = (key: string) =>
-    `https://${config.accountId}.r2.cloudflarestorage.com/${config.bucket}/${key}`;
+    `${config.endpoint ?? `https://${config.accountId}.r2.cloudflarestorage.com`}/${config.bucket}/${key}`;
   const publicPrefix = `${config.publicUrl}/`;
   return {
     name: "r2",
     async put(key, body, contentType) {
       assertValidKey(key);
-      const response = await client.fetch(objectUrl(key), {
+      // Sign, then send the bytes ourselves with an explicit length: R2 answers
+      // 411 to chunked uploads, which a re-wrapped Request body turns into.
+      const signed = await client.sign(objectUrl(key), {
         method: "PUT",
         headers: {
           "content-type": contentType,
+          "content-length": String(body.byteLength),
           "cache-control": "public, max-age=31536000, immutable",
         },
+        body: Buffer.from(body),
+      });
+      const response = await fetch(signed.url, {
+        method: "PUT",
+        headers: signed.headers,
         body: Buffer.from(body),
       });
       if (!response.ok) throw new Error(`r2 upload failed: ${response.status}`);
