@@ -1,6 +1,7 @@
 import adjustments from "./adjustments.json";
 import auth from "./auth.json";
 import categories from "./categories.json";
+import checkout from "./checkout.json";
 import common from "./common.json";
 import dashboard from "./dashboard.json";
 import devices from "./devices.json";
@@ -12,7 +13,9 @@ import picker from "./picker.json";
 import pos from "./pos.json";
 import preferences from "./preferences.json";
 import products from "./products.json";
+import quickKeys from "./quickKeys.json";
 import purchasing from "./purchasing.json";
+import receipt from "./receipt.json";
 import roles from "./roles.json";
 import states from "./states.json";
 import stocktakes from "./stocktakes.json";
@@ -25,6 +28,7 @@ const messages = {
   adjustments,
   auth,
   categories,
+  checkout,
   common,
   dashboard,
   devices,
@@ -36,7 +40,9 @@ const messages = {
   pos,
   preferences,
   products,
+  quickKeys,
   purchasing,
+  receipt,
   roles,
   states,
   stocktakes,
