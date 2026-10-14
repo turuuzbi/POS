@@ -11,6 +11,7 @@ import { z } from "zod";
 import type { Cart, CartLine } from "@/domain/cart";
 import type { DiscountRequest } from "@/domain/discounts";
 import { catalogEntryJsonSchema, entryToJson, type CatalogEntry } from "./catalog-entry";
+import { isPaymentEmpty, paymentFromJson, paymentToJson, type PaymentState } from "./payment-state";
 
 export interface StorageLike {
   getItem(key: string): string | null;
@@ -122,6 +123,8 @@ const draftSchema = z.object({
   ...recordFields,
   /** Wire input of a charge whose outcome is unknown; resent verbatim (same saleId). */
   pendingCharge: z.unknown().optional(),
+  /** Payments taken for this sale (a paid QPay intent must survive a reload). */
+  payment: z.unknown().optional(),
 });
 
 const heldSchema = z.object({
@@ -136,6 +139,7 @@ export interface Draft {
   cart: Cart;
   entries: CatalogEntry[];
   pendingCharge?: unknown;
+  payment?: PaymentState;
 }
 
 export interface HeldCart {
@@ -190,6 +194,9 @@ export function saveDraft(storage: StorageLike | null, scope: string, draft: Dra
     cart: cartToJson(draft.cart),
     entries: draft.entries.map(entryToJson),
     ...(draft.pendingCharge !== undefined ? { pendingCharge: draft.pendingCharge } : {}),
+    ...(draft.payment && !isPaymentEmpty(draft.payment)
+      ? { payment: paymentToJson(draft.payment) }
+      : {}),
   });
 }
 
@@ -206,6 +213,7 @@ export function loadDraft(storage: StorageLike | null, scope: string): Draft | n
     ...(parsed.data.pendingCharge !== undefined
       ? { pendingCharge: parsed.data.pendingCharge }
       : {}),
+    ...(parsed.data.payment !== undefined ? { payment: paymentFromJson(parsed.data.payment) } : {}),
   };
 }
 

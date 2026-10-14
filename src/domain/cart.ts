@@ -197,6 +197,7 @@ function applyAction(cart: Cart, action: CartAction, catalog: CatalogSnapshot): 
             !l.voided &&
             l.variantId === variant.variantId &&
             l.labelTotal === undefined &&
+            l.scaleBarcode === undefined &&
             l.priceOverride === undefined &&
             l.discounts.length === 0 &&
             !l.note &&
@@ -255,7 +256,9 @@ function applyAction(cart: Cart, action: CartAction, catalog: CatalogSnapshot): 
       const variant = variantOf(catalog, line.variantId);
       if (!isValidQty(action.qtyMilli, variant.unit)) throw new CartError("INVALID_QUANTITY");
       return replaceLine(cart, action.lineId, (l) => {
-        const { labelTotal: _drop, ...rest } = l;
+        // The label no longer describes the line: drop it so the wire carries
+        // variantId + qtyMilli and the server prices exactly what the cashier sees.
+        const { labelTotal: _label, scaleBarcode: _barcode, ...rest } = l;
         return { ...rest, qtyMilli: action.qtyMilli };
       });
     }

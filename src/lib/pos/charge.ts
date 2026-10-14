@@ -94,7 +94,8 @@ export function checkoutFailureFromAction(failure: {
 }
 
 export type ChargeOutcome =
-  | { ok: true; result: CheckoutResult }
+  /** `attempts` > 1: an earlier attempt got no usable answer, so `result.replayed` may be our own sale. */
+  | { ok: true; result: CheckoutResult; attempts: number }
   /** The server answered with a checkout error code. */
   | { ok: false; kind: "checkout"; code: string; details?: Record<string, unknown> }
   /** A generic action failure (not signed in, validation, internal …). */
@@ -133,7 +134,7 @@ export async function submitCheckout(
     }
     if (response?.ok) {
       const parsed = checkoutResultSchema.safeParse(response.data);
-      if (parsed.success) return { ok: true, result: parsed.data };
+      if (parsed.success) return { ok: true, result: parsed.data, attempts: attempt };
       lastWasFailure = { ok: false, kind: "unknown" };
     } else if (response) {
       const view = checkoutFailureFromAction(response.error);
@@ -155,7 +156,12 @@ export async function submitCheckout(
     }
     if (attempt < maxAttempts) await sleep(delays[Math.min(attempt - 1, delays.length - 1)] ?? 500);
   }
-  return lastWasFailure;
+  // INTERNAL and CONCURRENT_DUPLICATE that outlast the retries are NOT definitive:
+  // the sale may be committing (or committed) under this saleId, so the caller
+  // must keep the wire and the cart locked, exactly like a lost response.
+  return lastWasFailure.kind === "checkout" || lastWasFailure.kind === "action"
+    ? { ok: false, kind: "unknown" }
+    : lastWasFailure;
 }
 
 function defaultSleep(ms: number): Promise<void> {

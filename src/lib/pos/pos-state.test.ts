@@ -127,7 +127,8 @@ describe("register state", () => {
     const state = run([add(coffee, 1000, "a"), { type: "reset", saleId: "sale-2" }]);
     expect(state.saleId).toBe("sale-2");
     expect(state.cart.lines).toHaveLength(0);
-    expect(Object.keys(state.entries)).toHaveLength(0);
+    // the catalog is not part of the sale: it stays known for the quick keys
+    expect(Object.keys(state.entries)).toEqual(["v-coffee"]);
   });
 });
 
@@ -247,5 +248,27 @@ describe("repricing after STALE_PRICE", () => {
     expect(next.cart.lines[0]?.qtyMilli).toBe(2000);
     expect(next.cart.lines[0]?.discounts).toHaveLength(1);
     expect(totalsOf(next, config).total).toBe(1_080_000n); // 12 000₮ - 10%
+  });
+});
+
+describe("catalog entries survive a new sale, a hold and a resume", () => {
+  it("reset keeps the known entries (quick-key tiles need them)", () => {
+    const seeded = run([{ type: "entries", entries: [coffee, apples] }, add(coffee, 1000, "a")]);
+    const next = run([{ type: "reset", saleId: "sale-2" }], seeded);
+    expect(next.saleId).toBe("sale-2");
+    expect(next.cart.lines).toHaveLength(0);
+    expect(Object.keys(next.entries).sort()).toEqual(["v-apple", "v-coffee"]);
+  });
+
+  it("load merges the loaded cart's entries into the known ones", () => {
+    const seeded = run([{ type: "entries", entries: [coffee, apples] }]);
+    const held = run([add(apples, 500, "x")]);
+    const loaded = run(
+      [{ type: "load", state: { ...held, entries: { "v-apple": apples } } }],
+      seeded,
+    );
+    expect(loaded.saleId).toBe("sale-1");
+    expect(loaded.cart.lines[0]?.variantId).toBe("v-apple");
+    expect(Object.keys(loaded.entries).sort()).toEqual(["v-apple", "v-coffee"]);
   });
 });

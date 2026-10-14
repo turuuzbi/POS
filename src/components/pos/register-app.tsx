@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { computeTotals } from "@/domain/cart";
+import { computeTotals, type Cart } from "@/domain/cart";
 import type { CheckoutResult } from "@/domain/checkout-contract";
 import { DEFAULT_APPROVAL_POLICY, type ApprovalRequirement } from "@/domain/discounts";
 import { hasPermission, type Role } from "@/domain/permissions";
@@ -31,6 +31,7 @@ import { usePosStore } from "@/hooks/use-pos-store";
 import { snapshotOf, type CatalogEntry } from "@/lib/pos/catalog-entry";
 import { buildCheckoutInput } from "@/lib/pos/charge";
 import { storageScope, type HeldCart } from "@/lib/pos/hold-storage";
+import { createShortcutGuard } from "@/lib/pos/scan-burst";
 import {
   approvalFingerprint,
   type PosAction,
@@ -69,6 +70,7 @@ type DialogState =
   | { type: "camera" }
   | { type: "variants"; title: string; entries: CatalogEntry[] }
   | { type: "clear" }
+  | { type: "duplicate" }
   | { type: "success"; result: CheckoutResult };
 
 export interface RegisterAppProps {
@@ -189,6 +191,12 @@ function Selling({
   const [announce, setAnnounce] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const [now, setNow] = useState(() => Date.now());
+  // The latest state for callbacks that run after an await (a stale closure there
+  // would reprice the cart that was on screen BEFORE the await).
+  const latest = useRef(state);
+  useEffect(() => {
+    latest.current = state;
+  });
 
   // Prices for tiles/search come with each entry; quick-key entries seed the lookup.
   useEffect(() => {
@@ -212,7 +220,8 @@ function Selling({
     [state, config, user.role, now],
   );
   const pendingKeys = useMemo(() => new Set(pending.map((p) => p.key)), [pending]);
-  const locked = store.pendingCharge !== null;
+  // An unconfirmed charge, or QPay money already taken: the cart must not change.
+  const locked = store.locked;
   const modalOpen = dialog !== null;
   const canSkipApproval = (permission: ApprovalRequirement["permission"]) =>
     hasPermission(user.role, permission);
@@ -247,51 +256,63 @@ function Selling({
     return true;
   }, [locked, t]);
 
+  /** Add to the cart; says so (and announces) only when the cart really took it. */
+  const commitAdd = useCallback(
+    (action: Extract<PosAction, { type: "add" | "addScale" }>): boolean => {
+      if (store.reducer(latest.current, action) === latest.current) {
+        toast.error(t("search.addRejected"));
+        return false;
+      }
+      dispatch(action);
+      setAnnounce(t("announce.added", { name: action.entry.label }));
+      return true;
+    },
+    [dispatch, store, t],
+  );
+
   const addEntry = useCallback(
-    (entry: CatalogEntry, qtyMilli?: number) => {
-      if (guardLocked()) return;
+    (entry: CatalogEntry, qtyMilli?: number): boolean => {
+      if (guardLocked()) return false;
       if (isFractionalUnit(entry.unit) && qtyMilli === undefined) {
         setDialog({ type: "weigh", entry });
-        return;
+        return true;
       }
-      dispatch({
+      return commitAdd({
         type: "add",
         entry,
         qtyMilli: qtyMilli ?? MILLI_PER_UNIT,
         lineId: uuidv4(),
       });
-      setAnnounce(t("announce.added", { name: entry.label }));
     },
-    [dispatch, guardLocked, t],
+    [commitAdd, guardLocked],
   );
 
   const resolveCode = useCallback(
-    async (code: string, qtyMilli?: number): Promise<boolean> => {
+    async (code: string, qtyMilli?: number, options?: { quiet?: boolean }): Promise<boolean> => {
       if (guardLocked()) return true;
       try {
         const result = await lookupCodeAction({ code });
         if (!result.ok) {
-          toast.error(t("search.lookupFailed"));
+          if (!options?.quiet) toast.error(t("search.lookupFailed"));
           return false;
         }
         const { entry, scaleBarcode } = result.data;
         if (!entry) {
-          toast.error(t("search.codeNotFound", { code }));
+          if (!options?.quiet) toast.error(t("search.codeNotFound", { code }));
           return false;
         }
         if (scaleBarcode) {
-          dispatch({ type: "addScale", entry, barcode: scaleBarcode, lineId: uuidv4() });
-          setAnnounce(t("announce.added", { name: entry.label }));
+          commitAdd({ type: "addScale", entry, barcode: scaleBarcode, lineId: uuidv4() });
         } else {
           addEntry(entry, qtyMilli);
         }
         return true;
       } catch {
-        toast.error(t("search.lookupFailed"));
+        if (!options?.quiet) toast.error(t("search.lookupFailed"));
         return false;
       }
     },
-    [addEntry, dispatch, guardLocked, t],
+    [addEntry, commitAdd, guardLocked, t],
   );
 
   useBarcodeWedge({
@@ -303,21 +324,40 @@ function Selling({
 
   const lineOf = (lineId: string) => state.cart.lines.find((l) => l.lineId === lineId);
 
+  const { reconcilePayment } = store;
   const startCharge = useCallback(() => {
-    if (!online) return;
+    if (!online || store.conflict) return;
     if (locked) {
       setDialog({ type: "tender" });
       return;
     }
     if (state.cart.lines.every((l) => l.voided)) return;
+    // Tenders taken for another amount no longer apply.
+    reconcilePayment(totals.payable);
     if (pending.length > 0) setDialog({ type: "approval", thenCharge: true });
     else setDialog({ type: "tender" });
-  }, [locked, online, pending.length, state.cart.lines]);
+  }, [
+    locked,
+    online,
+    pending.length,
+    reconcilePayment,
+    state.cart.lines,
+    store.conflict,
+    totals.payable,
+  ]);
+
+  const openHeld = useCallback(() => {
+    // Resuming parks this cart, which would lose the unconfirmed charge / payment.
+    if (guardLocked()) return;
+    setDialog({ type: "held" });
+  }, [guardLocked]);
 
   const hold = useCallback(() => {
     if (guardLocked()) return;
     const result = store.holdCurrent();
-    if (result === "OK") {
+    if (result === "LOCKED") {
+      toast.error(t("pending.locked"));
+    } else if (result === "OK") {
       toast.success(t("held.parked"));
       setCartOpen(false);
       focusSearch();
@@ -349,7 +389,7 @@ function Selling({
     onCartDiscount: () => !guardLocked() && setDialog({ type: "discount", lineId: null }),
     onClear: () => !guardLocked() && setDialog({ type: "clear" }),
     onHold: hold,
-    onHeld: () => setDialog({ type: "held" }),
+    onHeld: openHeld,
     onApprove: () => setDialog({ type: "approval", thenCharge: false }),
     onCharge: startCharge,
     onClose: () => setCartOpen(false),
@@ -358,7 +398,20 @@ function Selling({
   // --- Keyboard shortcuts -------------------------------------------------------------
 
   useEffect(() => {
+    const guard = createShortcutGuard();
     const onKeyDown = (event: KeyboardEvent) => {
+      // A scanner's burst (the wedge already swallowed most of it) or a held key is
+      // typing, not a shortcut: a "/" or "?" inside a scanned code must not steal it.
+      if (
+        guard.ignore({
+          key: event.key,
+          time: event.timeStamp,
+          defaultPrevented: event.defaultPrevented,
+          repeat: event.repeat,
+        })
+      ) {
+        return;
+      }
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       const target = event.target as HTMLElement | null;
       const typing =
@@ -391,7 +444,7 @@ function Selling({
           break;
         case "F4":
           event.preventDefault();
-          setDialog({ type: "held" });
+          openHeld();
           break;
         case "F7":
           event.preventDefault();
@@ -405,36 +458,55 @@ function Selling({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [hold, locked, modalOpen, startCharge]);
+  }, [hold, locked, modalOpen, openHeld, startCharge]);
 
   // --- Dialog callbacks --------------------------------------------------------------
 
-  const refreshPrices = useCallback(async () => {
-    const ids = [...new Set(state.cart.lines.map((l) => l.variantId))];
-    if (ids.length === 0) return 0;
-    try {
-      const result = await refreshEntriesAction({ variantIds: ids });
-      if (!result.ok) return 0;
-      const changed = result.data.filter((entry) =>
-        state.cart.lines.some(
-          (l) => l.variantId === entry.variantId && l.unitPrice !== entry.price,
-        ),
-      ).length;
-      dispatch({ type: "reprice", entries: result.data });
-      return changed;
-    } catch {
-      return 0;
-    }
-  }, [dispatch, state.cart.lines]);
+  /** Take the current catalog prices for `cart` (default: the one on screen right now). */
+  const refreshPrices = useCallback(
+    async (cart: Cart = latest.current.cart) => {
+      const ids = [...new Set(cart.lines.map((l) => l.variantId))];
+      if (ids.length === 0) return 0;
+      try {
+        const result = await refreshEntriesAction({ variantIds: ids });
+        if (!result.ok) return 0;
+        const changed = result.data.filter((entry) =>
+          cart.lines.some((l) => l.variantId === entry.variantId && l.unitPrice !== entry.price),
+        ).length;
+        dispatch({ type: "reprice", entries: result.data });
+        return changed;
+      } catch {
+        return 0;
+      }
+    },
+    [dispatch],
+  );
+
+  // A draft restored after a reload may be days old: look at the prices once.
+  const repricedDraft = useRef(false);
+  useEffect(() => {
+    if (!store.hydrated || repricedDraft.current) return;
+    repricedDraft.current = true;
+    if (store.locked || latest.current.cart.lines.length === 0) return;
+    void refreshPrices(latest.current.cart).then((changed) => {
+      if (changed > 0) toast.warning(t("pending.pricesUpdated"));
+    });
+  }, [refreshPrices, store.hydrated, store.locked, t]);
 
   const onResume = async (cart: HeldCart) => {
-    if (store.resume(cart) === "FULL") {
+    const outcome = store.resume(cart);
+    if (outcome === "FULL") {
       toast.error(t("held.full"));
+      return;
+    }
+    if (outcome === "LOCKED") {
+      toast.error(t("pending.locked"));
       return;
     }
     setDialog(null);
     focusSearch();
-    const changed = await refreshPrices();
+    // The resumed cart, not the stale closure's: store.resume has only queued the load.
+    const changed = await refreshPrices(cart.cart);
     if (changed > 0) toast.warning(t("held.pricesChanged"));
   };
 
@@ -489,9 +561,9 @@ function Selling({
           role="alert"
           className="flex flex-wrap items-center justify-center gap-3 bg-warning/25 px-3 py-2 text-sm"
         >
-          <span>{t("pending.banner")}</span>
+          <span>{store.pendingCharge ? t("pending.banner") : t("pending.paymentBanner")}</span>
           <Button size="sm" onClick={() => setDialog({ type: "tender" })}>
-            {t("pending.retry")}
+            {store.pendingCharge ? t("pending.retry") : t("pending.paymentResume")}
           </Button>
         </div>
       ) : null}
@@ -559,9 +631,9 @@ function Selling({
           unit={dialog.entry.unit}
           qtyMilli={null}
           onSubmit={(qtyMilli) => {
-            dispatch({ type: "add", entry: dialog.entry, qtyMilli, lineId: uuidv4() });
-            setAnnounce(t("announce.added", { name: dialog.entry.label }));
-            closeDialog();
+            if (commitAdd({ type: "add", entry: dialog.entry, qtyMilli, lineId: uuidv4() })) {
+              closeDialog();
+            }
           }}
         />
       ) : null}
@@ -675,10 +747,12 @@ function Selling({
         />
       ) : null}
 
-      {dialog?.type === "tender" ? (
+      {dialog?.type === "tender" && !store.conflict ? (
         <TenderDialog
           open
           onClose={closeDialog}
+          payment={store.payment}
+          onPayment={store.setPayment}
           payable={totals.payable}
           cashUnit={cashUnitForRounding(config.totalRoundingUnit)}
           saleId={state.saleId}
@@ -693,7 +767,13 @@ function Selling({
           }}
           onProblem={async (kind) => {
             setDialog(null);
-            if (kind === "STALE_PRICE") {
+            if (kind === "DUPLICATE_SALE") {
+              // This sale id is already recorded and this register never sent it: a
+              // second tab or a stale draft. Nothing was charged now; start over.
+              store.newSale();
+              setCartOpen(false);
+              setDialog({ type: "duplicate" });
+            } else if (kind === "STALE_PRICE") {
               await refreshPrices();
               toast.warning(t("pending.pricesUpdated"));
             } else if (kind === "APPROVAL") {
@@ -745,6 +825,38 @@ function Selling({
           }}
         />
       ) : null}
+
+      <AlertDialog open={dialog?.type === "duplicate"}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("duplicate.title")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("duplicate.description")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={closeDialog}>{t("duplicate.ok")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={store.conflict}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("conflict.title")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("conflict.description")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction
+              onClick={() => {
+                store.adoptStored();
+                setDialog(null);
+                setCartOpen(false);
+              }}
+            >
+              {t("conflict.reload")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog
         open={dialog?.type === "clear"}

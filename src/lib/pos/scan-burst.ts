@@ -101,3 +101,33 @@ export function isEditableTarget(target: EventTarget | null): boolean {
   }
   return false;
 }
+
+export interface ShortcutKey {
+  key: string;
+  /** Event time in ms (KeyboardEvent.timeStamp). */
+  time: number;
+  defaultPrevented: boolean;
+  repeat: boolean;
+}
+
+/**
+ * Decides whether a keydown may trigger a register shortcut. Not when the
+ * wedge already swallowed it (defaultPrevented: every key of a burst after the
+ * first), when it is a held key, or when it is the third or later printable
+ * key of a burst (keys `maxGapMs` apart) while the wedge is switched off. A
+ * scanned code such as "AB/12" must not have its "/" steal focus or its "?"
+ * toggle help. Two quick keys are still a person (or a test) typing, and
+ * Shift & co. never count: they sit inside any typing.
+ */
+export function createShortcutGuard(maxGapMs: number = DEFAULT_BURST.maxGapMs) {
+  let last = Number.NEGATIVE_INFINITY;
+  let run = 0;
+  return {
+    ignore({ key, time, defaultPrevented, repeat }: ShortcutKey): boolean {
+      if (key.length !== 1) return defaultPrevented || repeat;
+      run = time - last <= maxGapMs ? run + 1 : 1;
+      last = time;
+      return defaultPrevented || repeat || run >= 3;
+    },
+  };
+}

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { computeTotals, type CatalogSnapshot } from "./cart";
+import { computeTotals, reduceCart, type CatalogSnapshot } from "./cart";
 import {
   CHECKOUT_ERROR_CODES,
   CHECKOUT_ERROR_MESSAGE_KEYS,
@@ -243,6 +243,27 @@ describe("cartFromCheckoutInput", () => {
       catalog,
     );
     expect(bad).toMatchObject({ ok: false, error: { code: "INVALID_QUANTITY" } });
+  });
+
+  it("an edited scale line is sent as variant + qty and the server agrees on the total", () => {
+    const code = buildScaleBarcode(DEFAULT_SCALE_RULES[0]!, "123", 1250);
+    const added = reduceCart(
+      { lines: [], discounts: [] },
+      { type: "ADD_SCALE", lineId: L1, barcode: code },
+      catalog,
+    );
+    if (!added.ok) throw new Error("setup");
+    const edited = reduceCart(added.cart, { type: "SET_QTY", lineId: L1, qtyMilli: 3000 }, catalog);
+    if (!edited.ok) throw new Error("setup");
+    const intents = lineIntentsFromCart(edited.cart);
+    expect(intents[0]).toMatchObject({ variantId: V2, qtyMilli: 3000 });
+    expect(intents[0]).not.toHaveProperty("scaleBarcode");
+    const server = cartFromCheckoutInput(parse({ lines: intents }), catalog);
+    if (!server.ok) throw new Error("server rebuild failed");
+    expect(computeTotals(server.cart, catalog).payable).toBe(
+      computeTotals(edited.cart, catalog).payable,
+    );
+    expect(computeTotals(server.cart, catalog).payable).toBe(T(18000));
   });
 
   it("client cart → intents → server cart round-trips", () => {

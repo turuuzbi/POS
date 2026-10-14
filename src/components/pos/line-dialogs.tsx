@@ -7,6 +7,7 @@ import { DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MAX_NOTE_LENGTH } from "@/domain/cart";
+import { MAX_MONEY } from "@/domain/catalog";
 import { discountNeedsApproval, type DiscountRequest } from "@/domain/discounts";
 import { MINOR_PER_MAJOR, type Money } from "@/domain/money";
 import { isFractionalUnit, parseQty, type Unit } from "@/domain/qty";
@@ -97,7 +98,9 @@ export function PriceDialog({
   const [text, setText] = useState(
     currentOverride !== undefined ? moneyToInput(currentOverride) : "",
   );
-  const parsed = parseKeypadMoney(text);
+  // The cart refuses prices above MAX_MONEY; say so instead of closing as if it applied.
+  const parsed = parseKeypadMoney(text, MAX_MONEY);
+  const invalid = text !== "" && parsed === null;
   const submit = () => {
     if (parsed !== null) onSubmit(parsed);
   };
@@ -114,8 +117,14 @@ export function PriceDialog({
         label={t("label")}
         suffix="₮"
         decimals={decimals}
+        invalid={invalid}
         onEnter={submit}
       />
+      {invalid ? (
+        <p role="alert" className="text-sm text-destructive">
+          {t("invalid")}
+        </p>
+      ) : null}
       <p className="text-sm text-muted-foreground">{t("approvalHint")}</p>
       <DialogFooter>
         {currentOverride !== undefined ? (

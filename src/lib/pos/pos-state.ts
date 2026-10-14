@@ -170,10 +170,12 @@ export function createPosReducer(config: PosConfig) {
         return { ...state, approvals: { ...state.approvals, ...action.grants } };
       case "dropApprovals":
         return Object.keys(state.approvals).length === 0 ? state : { ...state, approvals: {} };
+      // The catalog entries are what the grid and search know about, not part of
+      // a sale: a new sale or a resumed cart keeps them.
       case "reset":
-        return initialPosState(action.saleId);
+        return { ...initialPosState(action.saleId), entries: state.entries };
       case "load":
-        return action.state;
+        return { ...action.state, entries: { ...state.entries, ...action.state.entries } };
     }
   };
 }

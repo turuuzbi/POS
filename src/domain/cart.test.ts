@@ -164,6 +164,34 @@ describe("scale barcodes", () => {
     expect(computeTotals(over, catalog).lines[0]?.subtotal).not.toBe(T(4999));
   });
 
+  it("editing the quantity of a scale line drops the label (barcode and price)", () => {
+    const code = buildScaleBarcode(rule, "123", 1250);
+    const cart = run([
+      { type: "ADD_SCALE", lineId: "s", barcode: code },
+      { type: "SET_QTY", lineId: "s", qtyMilli: 3000 },
+    ]);
+    expect(cart.lines[0]?.scaleBarcode).toBeUndefined();
+    expect(cart.lines[0]?.labelTotal).toBeUndefined();
+    expect(computeTotals(cart, catalog).total).toBe(T(18000));
+  });
+
+  it("a piece item is never merged into a scale-label line", () => {
+    const pcs = {
+      variants: { ...catalog.variants, jar: variant("jar", { price: T(1000), pluCode: "777" }) },
+    };
+    const code = buildScaleBarcode(rule, "777", 2000);
+    const r1 = reduceCart(EMPTY_CART, { type: "ADD_SCALE", lineId: "s", barcode: code }, pcs);
+    if (!r1.ok) throw new Error("setup");
+    const r2 = reduceCart(
+      r1.cart,
+      { type: "ADD_ITEM", lineId: "p", variantId: "jar", qtyMilli: 1000 },
+      pcs,
+    );
+    if (!r2.ok) throw new Error("setup");
+    expect(r2.cart.lines).toHaveLength(2);
+    expect(r2.cart.lines[0]?.qtyMilli).toBe(2000);
+  });
+
   it("rejects bad checksum / unknown PLU", () => {
     const code = buildScaleBarcode(rule, "123", 500);
     const broken = code.slice(0, 12) + String((Number(code[12]) + 1) % 10);
