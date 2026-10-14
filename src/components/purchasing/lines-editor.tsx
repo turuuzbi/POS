@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatMoney, parseMoney } from "@/domain/money";
+import { costText } from "./line-text";
 import { lineTotal } from "@/domain/purchasing";
 import { parseQty, type Unit } from "@/domain/qty";
 
@@ -19,16 +20,6 @@ export interface EditorLine {
   unit: Unit;
   qty: string;
   cost: string;
-}
-
-/** Plain decimal text for an input (no digit grouping): 1250 -> "1.25". */
-export function qtyText(qtyMilli: number): string {
-  return String(qtyMilli / 1000);
-}
-
-/** Tugrug text for an input, e.g. "12,500.50". */
-export function costText(cost: bigint): string {
-  return formatMoney(cost, { symbol: false, locale: "en" });
 }
 
 export function lineFromVariant(variant: PickedVariant): EditorLine {

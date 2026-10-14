@@ -5,7 +5,7 @@ import { notFound, redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { EmptyState } from "@/components/app/empty-state";
 import { PageHeader } from "@/components/app/page-header";
-import { costText, qtyText } from "@/components/purchasing/lines-editor";
+import { costText, qtyText } from "@/components/purchasing/line-text";
 import { Button } from "@/components/ui/button";
 import { can } from "@/domain/access";
 import { canReceive, outstandingMilli } from "@/domain/purchasing";

@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { VariantPicker } from "@/components/catalog/variant-picker";
 import { ConfirmButton } from "@/components/form/confirm-button";
 import { FieldError, fieldA11y } from "@/components/form/field-error";
-import { costText } from "@/components/purchasing/lines-editor";
+import { costText } from "@/components/purchasing/line-text";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
