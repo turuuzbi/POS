@@ -74,7 +74,7 @@ export function ImportForm() {
   }
 
   const checkFile = () => {
-    if (!csv || previewAction.pending) return;
+    if (csv === null || previewAction.pending) return;
     previewAction.run(
       { csv },
       {
@@ -87,7 +87,7 @@ export function ImportForm() {
   };
 
   const importFile = () => {
-    if (!csv || commitAction.pending) return;
+    if (csv === null || commitAction.pending) return;
     commitAction.run(
       { csv },
       {
@@ -166,7 +166,7 @@ export function ImportForm() {
             <Button
               type="button"
               onClick={checkFile}
-              disabled={!csv || previewAction.pending}
+              disabled={csv === null || previewAction.pending}
               aria-busy={previewAction.pending}
             >
               {previewAction.pending ? t("import.previewing") : t("import.preview")}
