@@ -33,7 +33,7 @@ A cart needs a manager approval for every price override (price ≠ listed) and 
 
 ## Cart reducer (`cart.ts`)
 
-`reduceCart(cart, action, catalog)` returns `{ok, cart} | {ok:false, error}`; `cartReducer` is the `useReducer` form (invalid actions are ignored). Line ids come from the caller. Piece items merge into an existing plain line of the same variant and price (`merge:false` disables); weighed/measured items always add a new line. Scale labels (`ADD_SCALE`) resolve the variant by PLU: WEIGHT labels set the quantity; PRICE labels keep the exact label price (`labelTotal`) and derive the quantity from the catalog price. Changing the quantity drops `labelTotal`.
+`reduceCart(cart, action, catalog)` returns `{ok, cart} | {ok:false, error}`; `cartReducer` is the `useReducer` form (invalid actions are ignored). Line ids come from the caller. Piece items merge into an existing plain line of the same variant and price (`merge:false` disables); weighed/measured items always add a new line. Scale labels (`ADD_SCALE`) resolve the variant by PLU: WEIGHT labels set the quantity; PRICE labels keep the exact label price (`labelTotal`) and derive the quantity from the catalog price. Changing the quantity (`SET_QTY`) drops both `labelTotal` and `scaleBarcode`, and a piece item never merges into a scale line: the line is then sent as `variantId` + `qtyMilli`, so the server prices exactly what the cashier saw (a label that no longer describes the line would make the server re-derive the label's quantity and fail with TOTAL_MISMATCH).
 
 ## Tenders (`tender.ts`)
 

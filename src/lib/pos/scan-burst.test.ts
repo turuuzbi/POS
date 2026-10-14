@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { createBurstDetector, type BurstKey, type BurstOutcome } from "./scan-burst";
+import {
+  createBurstDetector,
+  createShortcutGuard,
+  type BurstKey,
+  type BurstOutcome,
+} from "./scan-burst";
 
 /** Feed a string as keystrokes `gap` ms apart; returns every outcome. */
 function type(
@@ -91,5 +96,52 @@ describe("scan burst detector", () => {
     const first = type(detector, "11112222");
     const second = type(detector, "33334444", { start: first.end + 500 });
     expect(second.outcomes.at(-1)).toEqual({ action: "scan", code: "33334444" });
+  });
+});
+
+describe("createShortcutGuard", () => {
+  const key = (
+    k: string,
+    time: number,
+    extra: { defaultPrevented?: boolean; repeat?: boolean } = {},
+  ) => ({
+    key: k,
+    time,
+    defaultPrevented: false,
+    repeat: false,
+    ...extra,
+  });
+
+  it("lets a deliberate '/' through and ignores one inside a fast burst", () => {
+    const guard = createShortcutGuard();
+    expect(guard.ignore(key("/", 1000))).toBe(false);
+    // scanner: 'A' 'B' '/' 8ms apart
+    const burst = createShortcutGuard();
+    expect(burst.ignore(key("A", 2000))).toBe(false);
+    expect(burst.ignore(key("B", 2008))).toBe(false); // the wedge swallows this one itself
+    expect(burst.ignore(key("/", 2016))).toBe(true);
+    expect(burst.ignore(key("?", 2024))).toBe(true);
+  });
+
+  it("ignores swallowed events and held keys, never function keys in a burst", () => {
+    const guard = createShortcutGuard();
+    expect(guard.ignore(key("/", 1000, { defaultPrevented: true }))).toBe(true);
+    expect(guard.ignore(key("/", 3000, { repeat: true }))).toBe(true);
+    expect(guard.ignore(key("F2", 3010))).toBe(false);
+  });
+
+  it("a Shift keydown right before '?' does not make it part of a burst", () => {
+    const guard = createShortcutGuard();
+    expect(guard.ignore(key("/", 1000))).toBe(false);
+    expect(guard.ignore(key("Shift", 1400))).toBe(false);
+    expect(guard.ignore(key("?", 1410))).toBe(false);
+    expect(guard.ignore(key("Shift", 1420))).toBe(false);
+    expect(guard.ignore(key("?", 1430))).toBe(false); // two quick keys: still a person
+  });
+
+  it("a person typing at normal speed is not a burst", () => {
+    const guard = createShortcutGuard();
+    expect(guard.ignore(key("a", 1000))).toBe(false);
+    expect(guard.ignore(key("/", 1300))).toBe(false);
   });
 });

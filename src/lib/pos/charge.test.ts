@@ -116,6 +116,7 @@ describe("submitCheckout", () => {
     });
     const outcome = await submitCheckout(call, input, noSleep);
     expect(outcome.ok).toBe(true);
+    expect(outcome.ok && outcome.attempts).toBe(3);
     expect(call).toHaveBeenCalledTimes(3);
     expect(new Set(seen)).toEqual(new Set([saleId]));
     expect(call.mock.calls.every(([sent]) => sent === input)).toBe(true);
@@ -130,17 +131,24 @@ describe("submitCheckout", () => {
     expect(call).toHaveBeenCalledTimes(2);
   });
 
-  it("retries INTERNAL but not a definite checkout error", async () => {
+  it("retries INTERNAL but not a definite checkout error; exhausted INTERNAL is unknown", async () => {
     const internal = vi.fn(async () => ({
       ok: false as const,
       error: { code: "INTERNAL" as const },
     }));
+    // the sale may have committed: keep the wire, keep the cart locked
     expect(await submitCheckout(internal, wire(), noSleep)).toEqual({
       ok: false,
-      kind: "action",
-      code: "INTERNAL",
+      kind: "unknown",
     });
     expect(internal).toHaveBeenCalledTimes(3);
+
+    const duplicate = vi.fn(async () => failure({ checkout: ["CONCURRENT_DUPLICATE"] }));
+    expect(await submitCheckout(duplicate, wire(), noSleep)).toEqual({
+      ok: false,
+      kind: "unknown",
+    });
+    expect(duplicate).toHaveBeenCalledTimes(3);
 
     const stale = vi.fn(async () =>
       failure({

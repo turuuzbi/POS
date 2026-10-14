@@ -120,6 +120,9 @@ export function useCameraScanner({
         } catch {
           // fall back to the default list
         }
+        // The dialog may have closed during the await above; the cleanup has already
+        // run, so an interval started now would never be cleared.
+        if (cancelled) return;
         const detector = new BarcodeDetector({ formats });
         const timer = setInterval(async () => {
           if (video.readyState < 2) return;
@@ -149,12 +152,14 @@ export function useCameraScanner({
       }
     };
     void start();
-    const video = videoRef.current;
 
     return () => {
       cancelled = true;
       stopLoop?.();
       stream?.getTracks().forEach((track) => track.stop());
+      // read now: the element may have mounted after the effect started (Radix portal)
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      const video = videoRef.current;
       if (video) video.srcObject = null;
       trackRef.current = null;
       setTorchOn(false);

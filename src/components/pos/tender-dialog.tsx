@@ -2,7 +2,7 @@
 
 import { Banknote, CreditCard, Landmark, Loader2, QrCode, Trash2 } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -18,6 +18,12 @@ import {
 } from "@/domain/tender";
 import { submitCheckout, type ChargeOutcome, type TenderDraft } from "@/lib/pos/charge";
 import { moneyToInput, parseKeypadMoney } from "@/lib/pos/money-input";
+import {
+  addPaymentTender,
+  removePaymentTender,
+  setPaymentInvoice,
+  type PaymentState,
+} from "@/lib/pos/payment-state";
 import type { ActionResult } from "@/server/actions/define-action";
 import { KeypadField } from "./keypad";
 import { PosDialog } from "./pos-dialog";
@@ -56,11 +62,18 @@ export interface TenderDialogProps {
   resume: CheckoutInputWire | null;
   onPending: (input: CheckoutInputWire | null) => void;
   onSuccess: (result: CheckoutResult, tenders: readonly TenderDraft[]) => void;
-  /** The server rejected the prices / approvals; the parent reacts, then reopens. */
+  /**
+   * The server rejected the prices / approvals; the parent reacts, then reopens.
+   * DUPLICATE_SALE: this sale id was already recorded and this register did not
+   * send it before (another tab or a stale draft); nothing new was charged.
+   */
   onProblem: (
-    kind: "STALE_PRICE" | "APPROVAL" | "SHIFT",
+    kind: "STALE_PRICE" | "APPROVAL" | "SHIFT" | "DUPLICATE_SALE",
     details?: Record<string, unknown>,
   ) => void;
+  /** Payments taken so far; they belong to the register store, not to this dialog. */
+  payment: PaymentState;
+  onPayment: (update: (current: PaymentState) => PaymentState) => void;
 }
 
 /**
@@ -73,8 +86,11 @@ export function TenderDialog(props: TenderDialogProps) {
   const te = useTranslations("errors");
   const tAll = useTranslations() as unknown as LooseT;
   const format = useFormat();
-  const [tenders, setTenders] = useState<TenderDraft[]>([]);
-  const [method, setMethod] = useState<Method>("CASH");
+  const { payment, onPayment } = props;
+  const tenders = payment.tenders;
+  /** An invoice is open: the customer may be paying right now. */
+  const awaiting = payment.invoice !== null;
+  const [method, setMethod] = useState<Method>(awaiting ? "QPAY" : "CASH");
   const [text, setText] = useState("");
   const [reference, setReference] = useState("");
   const [fieldError, setFieldError] = useState<string | null>(null);
@@ -84,7 +100,8 @@ export function TenderDialog(props: TenderDialogProps) {
   const errId = useId();
 
   const remaining = remainingBalance(payable, tenders);
-  const settled = remaining === 0n && tenders.length > 0;
+  // A sale that costs nothing (100% discount, rounds to zero) has nothing to tender.
+  const settled = remaining === 0n && (tenders.length > 0 || payable === 0n);
   const sending = submit.kind === "sending";
   const decimals = cashUnit < MINOR_PER_MAJOR ? 2 : 0;
   const unknownOnly = submit.kind === "unknown" && resume !== null && tenders.length === 0;
@@ -107,7 +124,7 @@ export function TenderDialog(props: TenderDialogProps) {
       : 0n;
 
   const addTender = (tender: TenderDraft) => {
-    setTenders((list) => [...list, tender]);
+    onPayment((p) => addPaymentTender(p, tender, payable));
     setReference("");
     setFieldError(null);
   };
@@ -151,22 +168,42 @@ export function TenderDialog(props: TenderDialogProps) {
     return t("errors.unknown");
   };
 
+  // Has this dialog (or an earlier one, before a reload) ever sent this sale without
+  // getting a usable answer? Only then is a replayed result "our own" sale.
+  const mayHaveSent = useRef(resume !== null);
+  const autoRetries = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
   const send = async (wire: CheckoutInputWire, used: readonly TenderDraft[]) => {
     setSubmit({ kind: "sending" });
     setLastInput(wire);
     props.onPending(wire);
     const outcome = await submitCheckout(props.charge, wire);
     if (outcome.ok) {
+      const ours = mayHaveSent.current || outcome.attempts > 1;
       props.onPending(null);
+      if (outcome.result.replayed && !ours) {
+        return props.onProblem("DUPLICATE_SALE");
+      }
       props.onSuccess(outcome.result, used);
       return;
     }
     if (outcome.kind === "unknown") {
+      mayHaveSent.current = true;
       setSubmit({ kind: "unknown" }); // keep the pending input: a retry replays it
       return;
     }
     props.onPending(null);
     if (outcome.kind === "checkout") {
+      if (outcome.code === "IDEMPOTENCY_CONFLICT" && !mayHaveSent.current) {
+        return props.onProblem("DUPLICATE_SALE");
+      }
       if (outcome.code === "STALE_PRICE") return props.onProblem("STALE_PRICE", outcome.details);
       if (outcome.code === "APPROVAL_REQUIRED" || outcome.code === "APPROVAL_INVALID") {
         return props.onProblem("APPROVAL", outcome.details);
@@ -190,6 +227,26 @@ export function TenderDialog(props: TenderDialogProps) {
     if (lastInput) void send(lastInput, tenders);
   };
 
+  // An unconfirmed charge is asked again by itself (same sale id, so never a second
+  // charge): a few times with growing pauses, then the cashier's button.
+  const retryRef = useRef(retry);
+  useEffect(() => {
+    retryRef.current = retry;
+  });
+  const unknown = submit.kind === "unknown";
+  useEffect(() => {
+    if (!unknown || autoRetries.current >= 4) return;
+    const timer = setTimeout(
+      () => {
+        if (!mounted.current) return;
+        autoRetries.current += 1;
+        retryRef.current();
+      },
+      3000 * 2 ** autoRetries.current,
+    );
+    return () => clearTimeout(timer);
+  }, [unknown, submit]);
+
   const totalChange = sum(
     tenders.map((x) => (x.method === "CASH" && x.tendered ? x.tendered - x.amount : 0n)),
   );
@@ -200,7 +257,7 @@ export function TenderDialog(props: TenderDialogProps) {
       onClose={onClose}
       title={t("title")}
       description={t("description")}
-      locked={sending}
+      locked={sending || awaiting}
       className="sm:max-w-xl"
     >
       <div className="grid grid-cols-2 gap-3 text-center">
@@ -241,7 +298,7 @@ export function TenderDialog(props: TenderDialogProps) {
                     variant="ghost"
                     size="icon"
                     aria-label={t("removeTender")}
-                    onClick={() => setTenders((list) => list.filter((_, i) => i !== index))}
+                    onClick={() => onPayment((p) => removePaymentTender(p, index))}
                   >
                     <Trash2 aria-hidden />
                   </Button>
@@ -305,7 +362,7 @@ export function TenderDialog(props: TenderDialogProps) {
                 role="radio"
                 aria-checked={method === m}
                 variant={method === m ? "default" : "outline"}
-                disabled={sending || tenders.length >= MAX_TENDERS}
+                disabled={sending || awaiting || tenders.length >= MAX_TENDERS}
                 onClick={() => setMethod(m)}
               >
                 <Icon aria-hidden /> {t(`method.${m}`)}
@@ -357,11 +414,19 @@ export function TenderDialog(props: TenderDialogProps) {
             </div>
           ) : method === "QPAY" ? (
             <QpayPanel
-              key={`${remaining}`}
+              key={payment.invoice?.invoice.intentId ?? `${remaining}`}
               saleId={saleId}
               amount={remaining}
-              onPaid={(intentId) =>
-                addTender({ method: "QPAY", amount: remaining, paymentIntentId: intentId })
+              initial={payment.invoice}
+              onInvoice={(invoice) => onPayment((p) => setPaymentInvoice(p, invoice))}
+              onPaid={(intentId, amount) =>
+                onPayment((p) =>
+                  addPaymentTender(
+                    setPaymentInvoice(p, null),
+                    { method: "QPAY", amount, paymentIntentId: intentId },
+                    payable,
+                  ),
+                )
               }
             />
           ) : (
@@ -404,7 +469,7 @@ export function TenderDialog(props: TenderDialogProps) {
       )}
 
       <DialogFooter>
-        <Button variant="outline" onClick={onClose} disabled={sending}>
+        <Button variant="outline" onClick={onClose} disabled={sending || awaiting}>
           {t("back")}
         </Button>
       </DialogFooter>

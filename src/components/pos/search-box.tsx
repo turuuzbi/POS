@@ -7,17 +7,9 @@ import type * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { CatalogEntry } from "@/lib/pos/catalog-entry";
-import { parseQty } from "@/domain/qty";
+import { parseQuantityPrefix } from "@/lib/pos/quantity-prefix";
 import { searchCatalogAction } from "@/server/actions/register";
 import { useFormat } from "./use-format";
-
-/** "3*4901234567890" -> 3 pieces of that code (quantity prefix typed or scanned). */
-export function parseQuantityPrefix(raw: string): { qtyMilli: number; code: string } | null {
-  const match = /^(\d+(?:[.,]\d{1,3})?)\s*[*xх×]\s*(.+)$/i.exec(raw.trim());
-  if (!match) return null;
-  const qty = parseQty(match[1]!, "KG"); // any positive milli value; the cart validates per unit
-  return qty === null ? null : { qtyMilli: qty, code: match[2]!.trim() };
-}
 
 const CODE_LIKE = /^[A-Za-z0-9._-]{3,}$/;
 
@@ -35,9 +27,10 @@ export function SearchBox({
 }: {
   inputRef: React.RefObject<HTMLInputElement | null>;
   disabled?: boolean;
-  onPick: (entry: CatalogEntry, qtyMilli?: number) => void;
-  /** Resolve an exact code; true when it matched a product. */
-  onCode: (code: string, qtyMilli?: number) => Promise<boolean>;
+  /** Add the entry; false when the cart refused it (the text then stays for correction). */
+  onPick: (entry: CatalogEntry, qtyMilli?: number) => boolean;
+  /** Resolve an exact code; true when it matched a product. `quiet`: no "not found" toast. */
+  onCode: (code: string, qtyMilli?: number, options?: { quiet?: boolean }) => Promise<boolean>;
   onCamera: () => void;
 }) {
   const t = useTranslations("pos.search");
@@ -81,7 +74,7 @@ export function SearchBox({
   };
 
   const pick = (entry: CatalogEntry, qtyMilli?: number) => {
-    onPick(entry, qtyMilli);
+    if (!onPick(entry, qtyMilli)) return;
     clear();
     inputRef.current?.focus();
   };
@@ -90,11 +83,25 @@ export function SearchBox({
     const raw = query.trim();
     if (!raw) return;
     const prefixed = parseQuantityPrefix(raw);
+    const exact = (code: string) =>
+      results.find((r) => r.barcode === code || r.sku?.toLowerCase() === code.toLowerCase());
+    if (prefixed) {
+      // The whole text may itself be a code or SKU ("2x4-BOARD"): that beats a quantity prefix.
+      const whole = exact(raw);
+      if (whole) return pick(whole);
+      if (CODE_LIKE.test(raw)) {
+        setBusy(true);
+        const matched = await onCode(raw, undefined, { quiet: true }).finally(() => setBusy(false));
+        if (matched) {
+          clear();
+          inputRef.current?.focus();
+          return;
+        }
+      }
+    }
     const value = prefixed?.code ?? raw;
     const qtyMilli = prefixed?.qtyMilli;
-    const local = results.find(
-      (r) => r.barcode === value || r.sku?.toLowerCase() === value.toLowerCase(),
-    );
+    const local = exact(value);
     if (local) return pick(local, qtyMilli);
     if (CODE_LIKE.test(value)) {
       setBusy(true);
