@@ -200,6 +200,8 @@ enum GiftCardEntryType {
 
 enum FiscalStatus {
   PENDING
+  /// Claimed by one runner that is calling the provider right now (see claimedAt).
+  ISSUING
   ISSUED
   FAILED
   CANCELLED
@@ -1370,6 +1372,8 @@ model FiscalReceipt {
   response    Json?
   error       String?
   attempts    Int          @default(0)
+  /// When the current ISSUING claim was taken; a stale claim (crashed runner) is retried.
+  claimedAt   DateTime?
   issuedAt    DateTime?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt

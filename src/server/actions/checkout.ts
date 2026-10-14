@@ -28,8 +28,12 @@ export const checkoutAction = defineAction({
   async run({ input, user, meta }): Promise<unknown> {
     const device = await requireRegisterContext(user);
     const result = await checkoutSale(input, { user, device, meta });
-    after(() => runPostSale(result.saleId));
-    if (!result.replayed) revalidatePath("/register");
+    if (!result.replayed) {
+      // A replay (double submit, timeout retry) already scheduled this when the sale
+      // committed; reconcileFiscalReceipts covers a crash in between.
+      after(() => runPostSale(result.saleId));
+      revalidatePath("/register");
+    }
     return toWire(result);
   },
 });

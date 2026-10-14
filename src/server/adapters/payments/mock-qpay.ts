@@ -1,5 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
+import { mockProvidersAllowed } from "../mock-guard";
 import type {
   CreateInvoiceInput,
   PaymentProvider,
@@ -16,15 +17,19 @@ import type {
  * id it hands out, `mock_<amount>_<createdMs>_<nonce>`. An invoice becomes PAID when
  *   1. `markMockInvoicePaid(ref)` is called (the dev-only route
  *      /api/payments/qpay/mock-pay and the integration tests do), or
- *   2. MOCK_QPAY_AUTOPAY_SECONDS is set (explicitly, in any environment) and
- *      that many seconds have passed since creation. In `next dev` the default
- *      is 5 so a developer can click through; in production nothing auto-pays
- *      unless the variable is set, so a misconfigured deployment cannot
- *      "receive" money that never arrived.
+ *   2. MOCK_QPAY_AUTOPAY_SECONDS is set and that many seconds have passed since
+ *      creation. In `next dev` the default is 5 so a developer can click
+ *      through. Both paths are honoured ONLY when mock providers are allowed
+ *      (not production, or ALLOW_MOCK_PROVIDERS=1; see ../mock-guard.ts), so a
+ *      production deployment can never "receive" money that never arrived.
  * MOCK_QPAY_AUTOPAY_SECONDS=never disables auto-pay even in development.
  *
- * State of `markMockInvoicePaid` lives in this process (globalThis), which is
- * exactly what a single dev/e2e server needs.
+ * LIMITATION (dev / staging / e2e only): the state of `markMockInvoicePaid`
+ * lives in this process (globalThis). That is what a single dev/e2e server
+ * needs; on multi-instance or serverless hosting the instance that handled
+ * mock-pay may not be the one that later checks the invoice. Auto-pay is
+ * stateless (derived from the invoice id) and works across instances, so use
+ * MOCK_QPAY_AUTOPAY_SECONDS on such a staging deploy.
  *
  * TODO(qpay): the real adapter (OAuth token, POST /v2/invoice, POST
  * /v2/payment/check, POST /v2/payment/refund, callback verification) replaces
@@ -47,12 +52,13 @@ export function parseMockRef(ref: string): { amount: bigint; createdMs: number }
 
 /** Test/dev hook: the customer "paid" this invoice. Returns false for an unknown ref. */
 export function markMockInvoicePaid(providerRef: string, at: Date = new Date()): boolean {
-  if (!parseMockRef(providerRef)) return false;
+  if (!mockProvidersAllowed() || !parseMockRef(providerRef)) return false;
   paid.set(providerRef, { paidAt: at });
   return true;
 }
 
 function autoPaySeconds(): number | null {
+  if (!mockProvidersAllowed()) return null;
   const raw = process.env.MOCK_QPAY_AUTOPAY_SECONDS;
   if (raw === "never") return null;
   if (raw !== undefined && raw !== "") {

@@ -13,7 +13,7 @@ import { ActionError } from "../errors";
 /**
  * Work that happens AFTER a sale committed, as retryable records so a slow or
  * failing provider never blocks or undoes a sale:
- *   - FiscalReceipt (eBarimt adapter): PENDING -> ISSUED, or FAILED with the
+ *   - FiscalReceipt (eBarimt adapter): PENDING -> ISSUING (claimed) -> ISSUED, or FAILED with the
  *     error and an attempt count; `retryFiscalReceipt` /
  *     `reconcileFiscalReceipts` pick up PENDING and FAILED rows.
  *   - ReceiptDelivery (SMS / e-mail): QUEUED -> SENT | FAILED.
@@ -46,14 +46,58 @@ export async function runPostSale(saleId: string): Promise<void> {
   }
 }
 
-/** One attempt at issuing a PENDING / FAILED fiscal receipt. Returns the resulting status. */
-export async function retryFiscalReceipt(fiscalReceiptId: string): Promise<string> {
+/** An ISSUING claim older than this is a crashed / hung runner and may be taken over. */
+export const FISCAL_CLAIM_TIMEOUT_MS = 5 * 60_000;
+
+function staleClaim(now: Date) {
+  return {
+    status: "ISSUING" as const,
+    OR: [
+      { claimedAt: null },
+      { claimedAt: { lt: new Date(now.getTime() - FISCAL_CLAIM_TIMEOUT_MS) } },
+    ],
+  };
+}
+
+/**
+ * One attempt at issuing a PENDING / FAILED (or stale ISSUING) fiscal receipt.
+ * The row is claimed first with an atomic compare-and-set to ISSUING, so
+ * concurrent runners (replayed checkout, reconcile sweep) call the provider
+ * at most once; a runner that loses the claim returns the current status
+ * without touching the provider. The sale id is the provider's idempotency
+ * key (FiscalSaleRequest.saleId), so a takeover after a crash between
+ * `issue()` and the final update cannot create a second fiscal document.
+ * Returns the resulting status.
+ */
+export async function retryFiscalReceipt(
+  fiscalReceiptId: string,
+  now: Date = new Date(),
+): Promise<string> {
   const receipt = await db.fiscalReceipt.findUnique({
     where: { id: fiscalReceiptId },
     include: { sale: { include: { lines: { orderBy: { lineNo: "asc" } }, payments: true } } },
   });
   if (!receipt || !receipt.sale) throw new ActionError("NOT_FOUND");
   if (receipt.status === "ISSUED" || receipt.status === "CANCELLED") return receipt.status;
+
+  const claimedAt = now;
+  const claim = await db.fiscalReceipt.updateMany({
+    where: {
+      id: receipt.id,
+      OR: [{ status: { in: ["PENDING", "FAILED"] } }, staleClaim(now)],
+    },
+    data: { status: "ISSUING", claimedAt, attempts: { increment: 1 } },
+  });
+  if (claim.count !== 1) {
+    const current = await db.fiscalReceipt.findUnique({
+      where: { id: receipt.id },
+      select: { status: true },
+    });
+    return current?.status ?? "ISSUING";
+  }
+  // Only the runner that still holds THIS claim may record the outcome.
+  const mine = { id: receipt.id, status: "ISSUING" as const, claimedAt };
+
   const sale = receipt.sale;
   const request: FiscalSaleRequest = {
     saleId: sale.id,
@@ -81,8 +125,8 @@ export async function retryFiscalReceipt(fiscalReceiptId: string): Promise<strin
   ) as Prisma.InputJsonValue;
   try {
     const issued = await getFiscalProvider().issue(request);
-    await db.fiscalReceipt.update({
-      where: { id: receipt.id },
+    const done = await db.fiscalReceipt.updateMany({
+      where: mine,
       data: {
         status: "ISSUED",
         externalId: issued.externalId,
@@ -91,10 +135,11 @@ export async function retryFiscalReceipt(fiscalReceiptId: string): Promise<strin
         request: requestJson,
         response: issued.raw as Prisma.InputJsonValue,
         error: null,
-        attempts: { increment: 1 },
+        claimedAt: null,
         issuedAt: new Date(),
       },
     });
+    if (done.count !== 1) return "ISSUING"; // claim was taken over; the new owner records it
     await audit(db, {
       actorId: null,
       action: "fiscal.issued",
@@ -105,13 +150,13 @@ export async function retryFiscalReceipt(fiscalReceiptId: string): Promise<strin
     });
     return "ISSUED";
   } catch (error) {
-    await db.fiscalReceipt.update({
-      where: { id: receipt.id },
+    await db.fiscalReceipt.updateMany({
+      where: mine,
       data: {
         status: "FAILED",
         request: requestJson,
         error: (error instanceof Error ? error.message : "unknown error").slice(0, 500),
-        attempts: { increment: 1 },
+        claimedAt: null,
       },
     });
     return "FAILED";
@@ -120,8 +165,11 @@ export async function retryFiscalReceipt(fiscalReceiptId: string): Promise<strin
 
 /**
  * Retry queue sweep: create missing fiscal receipts for committed sales (a
- * crash between commit and `after()`), then retry PENDING / FAILED ones.
- * Meant for a cron / admin button. Returns how many were attempted.
+ * crash between commit and `after()`), then retry PENDING / FAILED ones and
+ * ISSUING ones whose claim went stale. Safe to run concurrently with itself
+ * and with checkout's post-commit step: every attempt goes through the claim
+ * in `retryFiscalReceipt`. Meant for a cron / admin button. Returns how many
+ * were attempted.
  */
 export async function reconcileFiscalReceipts(limit = 50): Promise<number> {
   const missing = await db.sale.findMany({
@@ -132,7 +180,7 @@ export async function reconcileFiscalReceipts(limit = 50): Promise<number> {
   });
   for (const sale of missing) await runPostSale(sale.id);
   const open = await db.fiscalReceipt.findMany({
-    where: { status: { in: ["PENDING", "FAILED"] } },
+    where: { OR: [{ status: { in: ["PENDING", "FAILED"] } }, staleClaim(new Date())] },
     orderBy: { createdAt: "asc" },
     take: limit,
     select: { id: true },

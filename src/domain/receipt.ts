@@ -23,7 +23,7 @@ export const RECEIPT_PAYMENT_METHODS = [
 export type ReceiptPaymentMethod = (typeof RECEIPT_PAYMENT_METHODS)[number];
 
 export type ReceiptTaxTreatment = "STANDARD" | "ZERO_RATED" | "EXEMPT";
-export type ReceiptFiscalStatus = "PENDING" | "ISSUED" | "FAILED" | "CANCELLED";
+export type ReceiptFiscalStatus = "PENDING" | "ISSUING" | "ISSUED" | "FAILED" | "CANCELLED";
 
 export interface ReceiptSource {
   business: {

@@ -176,10 +176,14 @@ export async function checkQpay(intentId: string, user: Actor): Promise<{ status
   return result;
 }
 
-/** Webhook entry: find the intent by the provider's invoice id and trigger a status check. */
+/**
+ * Webhook entry: find the PENDING intent for the provider's invoice id and
+ * trigger a status check. Unknown refs and settled intents never reach the
+ * provider (the cashier's own check still re-verifies EXPIRED ones).
+ */
 export async function handleQpayWebhook(providerRef: string): Promise<void> {
   const intent = await db.paymentIntent.findFirst({
-    where: { provider: getPaymentProvider().name, providerRef },
+    where: { provider: getPaymentProvider().name, providerRef, status: "PENDING" },
     select: { id: true },
   });
   if (intent) await syncPaymentIntent(intent.id);
