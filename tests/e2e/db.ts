@@ -38,3 +38,18 @@ export async function withE2eDb(fn: (client: Client) => Promise<unknown>): Promi
 export function resetSeedLocales() {
   return withE2eDb((db) => db.query(`UPDATE "User" SET "locale" = NULL`));
 }
+
+/**
+ * Remove the categories, products and (by cascade) quick keys that
+ * quick-keys.spec created for itself ("QK tab <tok>", "QK<tok> NN"). Seed
+ * data is never matched.
+ */
+export async function sweepQuickKeyFixtures(db: Client) {
+  await db.query(`DELETE FROM "Category" WHERE "name" ~ '^QK tab [0-9a-f]{8}$'`);
+  await db.query(
+    `DELETE FROM "Product" p WHERE p."name" ~ '^QK[0-9a-f]{8} [0-9]{2}$'
+       AND NOT EXISTS (SELECT 1 FROM "ProductVariant" v WHERE v."productId" = p.id AND (
+         EXISTS (SELECT 1 FROM "SaleLine" l WHERE l."variantId" = v.id)
+         OR EXISTS (SELECT 1 FROM "StockMovement" m WHERE m."variantId" = v.id)))`,
+  );
+}

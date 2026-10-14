@@ -9,7 +9,7 @@ import {
   token,
   watchPage,
 } from "./helpers/products";
-import { withE2eDb } from "./db";
+import { sweepQuickKeyFixtures, withE2eDb } from "./db";
 
 const Q = mn.quickKeys;
 const fill = (message: string, values: Record<string, string>) =>
@@ -22,6 +22,9 @@ test.beforeEach(async ({ page }) => {
 test.afterEach(() => {
   watch.expectClean();
 });
+
+// The tests only ever create their own "QK" categories/products/keys; remove them again.
+test.afterAll(() => withE2eDb(sweepQuickKeyFixtures));
 
 const rows = (page: Page) => page.getByRole("main").locator("ol > li");
 const rowNames = async (page: Page) =>

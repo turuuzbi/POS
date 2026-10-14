@@ -8,10 +8,19 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { CatalogEntry } from "@/lib/pos/catalog-entry";
 import { parseQuantityPrefix } from "@/lib/pos/quantity-prefix";
+import { createSerialQueue } from "@/lib/pos/serial-queue";
 import { searchCatalogAction } from "@/server/actions/register";
 import { useFormat } from "./use-format";
 
 const CODE_LIKE = /^[A-Za-z0-9._-]{3,}$/;
+
+/** What was on screen when Enter was pressed. */
+interface Submission {
+  raw: string;
+  results: CatalogEntry[];
+  active: number;
+  open: boolean;
+}
 
 /**
  * Search-as-you-type box. Typing a code and pressing Enter (what a USB scanner
@@ -40,16 +49,19 @@ export function SearchBox({
   const [results, setResults] = useState<CatalogEntry[]>([]);
   const [active, setActive] = useState(0);
   const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [lookups, setLookups] = useState(0);
   const [notFound, setNotFound] = useState(false);
   const ticket = useRef(0);
+  const queryRef = useRef("");
+  const queue = useRef(createSerialQueue());
 
   useEffect(() => {
     const value = query.trim();
     if (!value) return;
     const mine = ++ticket.current;
     const timer = setTimeout(async () => {
-      setBusy(true);
+      setSearching(true);
       try {
         const result = await searchCatalogAction({ query: value });
         if (mine !== ticket.current) return;
@@ -59,18 +71,24 @@ export function SearchBox({
       } catch {
         if (mine === ticket.current) setResults([]);
       } finally {
-        if (mine === ticket.current) setBusy(false);
+        if (mine === ticket.current) setSearching(false);
       }
     }, 150);
     return () => clearTimeout(timer);
   }, [query]);
 
+  /** The text as typed right now (state lags a render behind a fast scanner). */
+  const setText = (value: string) => {
+    queryRef.current = value;
+    setQuery(value);
+  };
+
   const clear = () => {
     ticket.current++;
-    setQuery("");
+    setText("");
     setResults([]);
     setOpen(false);
-    setBusy(false);
+    setSearching(false);
   };
 
   const pick = (entry: CatalogEntry, qtyMilli?: number) => {
@@ -79,43 +97,56 @@ export function SearchBox({
     inputRef.current?.focus();
   };
 
-  const submit = async () => {
-    const raw = query.trim();
-    if (!raw) return;
+  /** Resolve one submitted text; true when it was handled, false to give it back for correction. */
+  const resolve = async ({ raw, results, active, open }: Submission): Promise<boolean> => {
     const prefixed = parseQuantityPrefix(raw);
     const exact = (code: string) =>
       results.find((r) => r.barcode === code || r.sku?.toLowerCase() === code.toLowerCase());
+    const take = (entry: CatalogEntry, qtyMilli?: number) => onPick(entry, qtyMilli);
     if (prefixed) {
       // The whole text may itself be a code or SKU ("2x4-BOARD"): that beats a quantity prefix.
       const whole = exact(raw);
-      if (whole) return pick(whole);
-      if (CODE_LIKE.test(raw)) {
-        setBusy(true);
-        const matched = await onCode(raw, undefined, { quiet: true }).finally(() => setBusy(false));
-        if (matched) {
-          clear();
-          inputRef.current?.focus();
-          return;
-        }
-      }
+      if (whole) return take(whole);
+      if (CODE_LIKE.test(raw) && (await onCode(raw, undefined, { quiet: true }))) return true;
     }
     const value = prefixed?.code ?? raw;
     const qtyMilli = prefixed?.qtyMilli;
     const local = exact(value);
-    if (local) return pick(local, qtyMilli);
-    if (CODE_LIKE.test(value)) {
-      setBusy(true);
-      const matched = await onCode(value, qtyMilli).finally(() => setBusy(false));
-      if (matched) {
-        clear();
-        inputRef.current?.focus();
-        return;
-      }
-    }
+    if (local) return take(local, qtyMilli);
+    if (CODE_LIKE.test(value) && (await onCode(value, qtyMilli))) return true;
     const chosen = open ? results[active] : undefined;
-    if (chosen) return pick(chosen, qtyMilli);
+    if (chosen) return take(chosen, qtyMilli);
     setNotFound(true);
+    return false;
   };
+
+  /**
+   * Take the typed text out of the box at once and look it up in order behind
+   * any lookup still running. A scanner may type the next code while the
+   * previous one is in flight: that code must neither be glued to the old text
+   * nor wiped when the old lookup returns. A text that could not be handled is
+   * put back for correction, unless something new has been typed meanwhile.
+   */
+  const submit = () => {
+    const raw = queryRef.current.trim();
+    if (!raw) return;
+    const submission: Submission = { raw, results, active, open };
+    clear();
+    inputRef.current?.focus();
+    setLookups((n) => n + 1);
+    const giveBack = () => {
+      if (queryRef.current === "") setText(raw);
+    };
+    queue.current
+      .run(() => resolve(submission))
+      .then((handled) => {
+        if (!handled) giveBack();
+      })
+      .catch(giveBack)
+      .finally(() => setLookups((n) => n - 1));
+  };
+
+  const busy = searching || lookups > 0;
 
   return (
     <div className="relative flex w-full min-w-0 items-center gap-2">
@@ -140,6 +171,7 @@ export function SearchBox({
           placeholder={t("placeholder")}
           value={query}
           onChange={(event) => {
+            queryRef.current = event.target.value;
             setQuery(event.target.value);
             setNotFound(false);
             if (!event.target.value.trim()) clear();
@@ -160,7 +192,7 @@ export function SearchBox({
               }
             } else if (event.key === "Enter") {
               event.preventDefault();
-              void submit();
+              submit();
             }
           }}
         />

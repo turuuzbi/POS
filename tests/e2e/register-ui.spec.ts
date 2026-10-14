@@ -543,6 +543,31 @@ test.describe("responsive layout", () => {
     });
   }
 
+  test("a code scanned while the previous lookup is in flight is never dropped (phone)", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 360, height: 740 });
+    session = await startRegister(page, { shift: true });
+    // Slow every server action so the next scan always lands mid-lookup.
+    await page.route("**/register", async (route) => {
+      if (route.request().headers()["next-action"]) await new Promise((r) => setTimeout(r, 400));
+      await route.continue();
+    });
+    const search = page.getByRole("combobox", { name: mn.pos.search.label });
+    // Back to back, no waiting in between: what a scanner typing into the box does.
+    await search.fill(MILK.sku);
+    await search.press("Enter");
+    await search.fill(BREAD.sku);
+    await search.press("Enter");
+    await search.fill(MILK.sku);
+    await search.press("Enter");
+    await page.getByRole("button", { name: msg(mn.pos.cart.open, { count: 2 }) }).click();
+    await expect(cartLines(page)).toHaveCount(2);
+    await expect(payable(page)).toHaveText(money(2 * MILK.price + BREAD.price));
+    await page.getByRole("button", { name: mn.pos.cart.backToItems }).click();
+    await expect(search).toHaveValue("");
+  });
+
   test("dark theme keeps the layout intact", async ({ page }) => {
     await page.emulateMedia({ colorScheme: "dark" });
     session = await startRegister(page, { shift: true });

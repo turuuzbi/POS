@@ -25,6 +25,7 @@ import { DEFAULT_APPROVAL_POLICY, type ApprovalRequirement } from "@/domain/disc
 import { hasPermission, type Role } from "@/domain/permissions";
 import { isFractionalUnit, MILLI_PER_UNIT } from "@/domain/qty";
 import { cashUnitForRounding } from "@/domain/tender";
+import { createSerialQueue } from "@/lib/pos/serial-queue";
 import { useBarcodeWedge } from "@/hooks/use-barcode-wedge";
 import { useOnline } from "@/hooks/use-online";
 import { usePosStore } from "@/hooks/use-pos-store";
@@ -315,9 +316,11 @@ function Selling({
     [addEntry, commitAdd, guardLocked, t],
   );
 
+  // Scans arriving while a lookup is in flight are resolved in scan order, none dropped.
+  const scanQueue = useRef(createSerialQueue());
   useBarcodeWedge({
     enabled: !modalOpen && !locked,
-    onScan: (code) => void resolveCode(code),
+    onScan: (code) => void scanQueue.current.run(() => resolveCode(code)),
   });
 
   // --- Cart handlers ----------------------------------------------------------------
