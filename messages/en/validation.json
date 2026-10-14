@@ -1,0 +1,12 @@
+{
+  "required": "Required.",
+  "tooLong": "Too long.",
+  "invalid": "Not a valid value.",
+  "invalidMoney": "Enter an amount like 12,500.",
+  "invalidQty": "Enter a valid quantity.",
+  "invalidBarcode": "Not a valid barcode.",
+  "invalidPlu": "A PLU is up to 7 digits.",
+  "duplicate": "Already used by another item.",
+  "cycle": "A category can't be inside its own subcategory.",
+  "inactive": "This has been archived. Pick another."
+}

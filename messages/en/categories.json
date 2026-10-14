@@ -1,0 +1,32 @@
+{
+  "title": "Categories",
+  "description": "Group products, and use the groups as tabs on the register.",
+  "new": "New category",
+  "editTitle": "Edit category",
+  "createTitle": "New category",
+  "name": "Name",
+  "parent": "Parent category",
+  "noParent": "Top level",
+  "color": "Colour",
+  "noColor": "No colour",
+  "sortOrder": "Sort order",
+  "products": "Products",
+  "productCount": "{count, plural, =0 {No products} one {# product} other {# products}}",
+  "empty": "No categories yet.",
+  "emptyDescription": "Create your first category to group products.",
+  "archiveConfirm": "Archive “{name}”? It can no longer be picked for products.",
+  "archived": "Category archived.",
+  "restored": "Category restored.",
+  "listHeading": "All categories",
+  "colors": {
+    "slate": "Grey",
+    "red": "Red",
+    "orange": "Orange",
+    "amber": "Amber",
+    "green": "Green",
+    "teal": "Teal",
+    "blue": "Blue",
+    "violet": "Violet",
+    "pink": "Pink"
+  }
+}

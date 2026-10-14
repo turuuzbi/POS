@@ -1,6 +1,6 @@
 import { expect, type Page } from "@playwright/test";
-import en from "../../messages/en.json";
-import mn from "../../messages/mn.json";
+import en from "../../messages/en";
+import mn from "../../messages/mn";
 
 /** Seeded development accounts (prisma/seed.ts). */
 export const SEED = {

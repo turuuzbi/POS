@@ -1,0 +1,9 @@
+{
+  "errorTitle": "Something went wrong",
+  "errorDescription": "This page couldn't be loaded. Try again; if it keeps happening, tell your manager.",
+  "errorReference": "Reference: {digest}",
+  "notFoundTitle": "Page not found",
+  "notFoundDescription": "The page you're looking for doesn't exist or has moved.",
+  "forbiddenTitle": "No access",
+  "forbiddenDescription": "Your role doesn't allow this page. Ask the owner or a manager if you need access."
+}

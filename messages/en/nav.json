@@ -1,0 +1,23 @@
+{
+  "label": "Main navigation",
+  "dashboard": "Dashboard",
+  "register": "Register",
+  "devices": "Devices",
+  "products": "Products",
+  "categories": "Categories",
+  "importExport": "Import and export",
+  "stock": "Stock",
+  "adjustments": "Adjustments",
+  "stocktakes": "Stocktakes",
+  "purchaseOrders": "Purchase orders",
+  "receiving": "Receiving",
+  "suppliers": "Suppliers",
+  "taxClasses": "Tax classes",
+  "sections": {
+    "overview": "Overview",
+    "catalog": "Catalog",
+    "inventory": "Inventory",
+    "purchasing": "Purchasing",
+    "settings": "Settings"
+  }
+}

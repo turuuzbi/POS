@@ -5,9 +5,10 @@ import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { NavLinks, type NavKey } from "./nav-links";
+import type { VisibleNav } from "./nav-config";
+import { NavLinks } from "./nav-links";
 
-export function MobileNav({ items }: { items: NavKey[] }) {
+export function MobileNav({ nav }: { nav: VisibleNav }) {
   const t = useTranslations();
   const [open, setOpen] = useState(false);
   return (
@@ -17,10 +18,15 @@ export function MobileNav({ items }: { items: NavKey[] }) {
           <Menu className="size-5" aria-hidden />
         </Button>
       </SheetTrigger>
-      <SheetContent side="left" closeLabel={t("common.close")} aria-describedby={undefined}>
+      <SheetContent
+        side="left"
+        className="overflow-y-auto"
+        closeLabel={t("common.close")}
+        aria-describedby={undefined}
+      >
         <SheetTitle className="px-4 pt-5">{t("common.appName")}</SheetTitle>
         <nav aria-label={t("nav.label")} className="px-2">
-          <NavLinks items={items} onNavigate={() => setOpen(false)} />
+          <NavLinks nav={nav} onNavigate={() => setOpen(false)} />
         </nav>
       </SheetContent>
     </Sheet>

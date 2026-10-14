@@ -715,6 +715,11 @@ model StockLevel {
 /// Append-only. The single source of truth for stock.
 model StockMovement {
   id                String            @id @default(uuid(7)) @db.Uuid
+  /// Insertion order. Assigned when the row is written — after the stock
+  /// service has locked the level — so per (variant, location) it is the
+  /// order balances were computed in. createdAt is the transaction start
+  /// time and can't order concurrent writers.
+  seq               BigInt            @unique @default(autoincrement())
   variantId         String            @db.Uuid
   locationId        String            @db.Uuid
   type              StockMovementType
@@ -739,7 +744,7 @@ model StockMovement {
   stocktake    Stocktake?       @relation(fields: [stocktakeId], references: [id])
   createdBy    User             @relation(fields: [createdById], references: [id])
 
-  @@index([variantId, locationId, createdAt])
+  @@index([variantId, locationId, seq])
   @@index([locationId, createdAt])
   @@index([saleId])
   @@index([refundId])

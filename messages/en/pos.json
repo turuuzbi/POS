@@ -1,0 +1,8 @@
+{
+  "title": "Register",
+  "cashier": "Cashier: {name}",
+  "unassigned": "No register assigned",
+  "checkoutComingTitle": "Checkout is coming next",
+  "checkoutComingDescription": "Product search, scanning and payments arrive in the next release.",
+  "backOffice": "Back office"
+}

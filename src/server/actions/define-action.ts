@@ -3,6 +3,7 @@ import { unstable_rethrow } from "next/navigation";
 import type { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
 import type { Permission } from "@/domain/permissions";
+import { ActionError, type ActionFailure } from "../errors";
 import { can, getCurrentUser, type CurrentUser } from "../auth/session";
 import { requestMeta, type RequestMeta } from "../request";
 
@@ -15,37 +16,10 @@ import { requestMeta, type RequestMeta } from "../request";
  * A unit test fails the build if a "use server" module exports anything else.
  */
 
-export const ACTION_ERROR_CODES = [
-  "UNAUTHENTICATED",
-  "FORBIDDEN",
-  "VALIDATION",
-  "NOT_FOUND",
-  "CONFLICT",
-  "RATE_LIMITED",
-  "INVALID_CREDENTIALS",
-  "DEVICE_REQUIRED",
-  "INTERNAL",
-] as const;
-export type ActionErrorCode = (typeof ACTION_ERROR_CODES)[number];
-
-export interface ActionFailure {
-  code: ActionErrorCode;
-  /** Zod field errors for VALIDATION, keyed by dotted path. */
-  fieldErrors?: Record<string, string[]>;
-}
+export { ACTION_ERROR_CODES, ActionError } from "../errors";
+export type { ActionErrorCode, ActionFailure } from "../errors";
 
 export type ActionResult<T> = { ok: true; data: T } | { ok: false; error: ActionFailure };
-
-/** Throw from inside `run` to return a typed failure. */
-export class ActionError extends Error {
-  constructor(
-    readonly code: ActionErrorCode,
-    message?: string,
-  ) {
-    super(message ?? code);
-    this.name = "ActionError";
-  }
-}
 
 export interface ActionContext<I, U> {
   input: I;
@@ -72,10 +46,15 @@ function fieldErrors(error: z.ZodError): Record<string, string[]> {
 }
 
 function toFailure(name: string, error: unknown): ActionFailure {
-  if (error instanceof ActionError) return { code: error.code };
+  if (error instanceof ActionError) {
+    return error.fieldErrors
+      ? { code: error.code, fieldErrors: error.fieldErrors }
+      : { code: error.code };
+  }
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === "P2002") return { code: "CONFLICT" };
     if (error.code === "P2025") return { code: "NOT_FOUND" };
+    if (error.code === "P2003") return { code: "IN_USE" };
   }
   console.error(`[action:${name}] unexpected error`, error);
   return { code: "INTERNAL" };

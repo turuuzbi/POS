@@ -1,0 +1,14 @@
+{
+  "UNAUTHENTICATED": "Please sign in again.",
+  "FORBIDDEN": "You don't have permission to do that.",
+  "VALIDATION": "Please check the highlighted fields.",
+  "NOT_FOUND": "It no longer exists.",
+  "CONFLICT": "That conflicts with existing data. Refresh and try again.",
+  "RATE_LIMITED": "Too many attempts. Wait a moment and try again.",
+  "INVALID_CREDENTIALS": "Sign-in failed. Check your details and try again.",
+  "DEVICE_REQUIRED": "This needs a paired register device.",
+  "INSUFFICIENT_STOCK": "There isn't enough stock.",
+  "INVALID_STATE": "This can't be done in the record's current state. Refresh the page.",
+  "IN_USE": "This is still used elsewhere, so it can't be deleted. Archive it instead.",
+  "INTERNAL": "Something went wrong. Please try again."
+}

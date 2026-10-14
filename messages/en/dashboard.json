@@ -1,0 +1,11 @@
+{
+  "title": "Dashboard",
+  "greeting": "Hello, {name}",
+  "signedInAs": "Signed in as {role}",
+  "openRegister": "Open register",
+  "openRegisterDescription": "Go to the sales screen.",
+  "manageDevices": "Register devices",
+  "manageDevicesDescription": "Pair tablets so staff can sign in with a PIN.",
+  "comingSoonTitle": "More modules are on the way",
+  "comingSoonDescription": "Catalog, inventory, customers and reports will appear here as they are released."
+}

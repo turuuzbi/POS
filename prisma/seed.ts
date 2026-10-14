@@ -11,6 +11,7 @@ import { ean13CheckDigit, normalizePlu } from "@/domain/scale-barcode";
 import { hashPassword } from "@/server/auth/password";
 import { pinLookup } from "@/server/auth/pin";
 import { db } from "@/server/db";
+import { postStockMovements } from "@/server/services/stock";
 import { SEED_CATEGORIES, SEED_PRODUCTS } from "./seed-data";
 
 const DEV_PASSWORD = process.env.SEED_OWNER_PASSWORD ?? "demo-password-2026";
@@ -163,51 +164,41 @@ async function seedCatalog(taxClassId: string) {
 }
 
 /**
- * Opening stock as ledger entries: one OPENING movement per stocked variant
- * plus its StockLevel projection, in one transaction. Skips variants that
- * already have any movement at the location (idempotent).
- * Phase 1 moves this onto the stock service.
+ * Opening stock through the stock service: one OPENING movement per stocked
+ * variant that has no movement at the location yet (idempotent), plus
+ * reorder points for the low-stock list.
  */
 async function seedOpeningStock(locationId: string, createdById: string) {
   const variants = await db.productVariant.findMany({
-    where: { product: { trackStock: true, type: "STANDARD" } },
+    where: {
+      product: { trackStock: true, type: "STANDARD" },
+      stockMovements: { none: { locationId } },
+    },
     include: { product: { select: { unit: true } } },
+    orderBy: { id: "asc" },
   });
-  let created = 0;
-  for (const variant of variants) {
-    const already = await db.stockMovement.count({
-      where: { variantId: variant.id, locationId },
-    });
-    if (already > 0) continue;
-    const qtyMilli = units(variant.product.unit === "PIECE" ? OPENING_PIECES : OPENING_KG);
-    await db.$transaction([
-      db.stockMovement.create({
-        data: {
-          variantId: variant.id,
-          locationId,
-          type: "OPENING",
-          qtyDeltaMilli: qtyMilli,
-          balanceAfterMilli: qtyMilli,
-          unitCost: variant.cost,
-          note: "Seed opening stock",
-          createdById,
-        },
-      }),
-      db.stockLevel.upsert({
-        where: { variantId_locationId: { variantId: variant.id, locationId } },
-        update: {},
-        create: {
-          variantId: variant.id,
-          locationId,
-          onHandMilli: qtyMilli,
-          reorderPointMilli: Math.round(qtyMilli / 4),
-          reorderQtyMilli: qtyMilli,
-        },
-      }),
-    ]);
-    created++;
-  }
-  return created;
+  if (variants.length === 0) return 0;
+  const qtyFor = (unit: string) => units(unit === "PIECE" ? OPENING_PIECES : OPENING_KG);
+  await db.$transaction(
+    async (tx) => {
+      await postStockMovements(tx, {
+        locationId,
+        type: "OPENING",
+        createdById,
+        note: "Seed opening stock",
+        lines: variants.map((v) => ({ variantId: v.id, qtyDeltaMilli: qtyFor(v.product.unit) })),
+      });
+      for (const variant of variants) {
+        const qty = qtyFor(variant.product.unit);
+        await tx.stockLevel.update({
+          where: { variantId_locationId: { variantId: variant.id, locationId } },
+          data: { reorderPointMilli: Math.round(qty / 4), reorderQtyMilli: qty },
+        });
+      }
+    },
+    { timeout: 120_000 },
+  );
+  return variants.length;
 }
 
 async function main() {

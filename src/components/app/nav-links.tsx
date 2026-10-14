@@ -1,46 +1,88 @@
 "use client";
 
-import { LayoutDashboard, MonitorSmartphone, ShoppingCart, type LucideIcon } from "lucide-react";
+import {
+  Boxes,
+  ClipboardCheck,
+  ClipboardList,
+  FileSpreadsheet,
+  FolderTree,
+  LayoutDashboard,
+  MonitorSmartphone,
+  Package,
+  PackageCheck,
+  Percent,
+  ShoppingCart,
+  SlidersHorizontal,
+  Truck,
+  type LucideIcon,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
+import { NAV_HREF, type NavKey, type VisibleNav } from "./nav-config";
 
-export type NavKey = "dashboard" | "register" | "devices";
-
-const ITEMS: Record<NavKey, { href: string; icon: LucideIcon }> = {
-  dashboard: { href: "/dashboard", icon: LayoutDashboard },
-  register: { href: "/register", icon: ShoppingCart },
-  devices: { href: "/settings/devices", icon: MonitorSmartphone },
+const ICONS: Record<NavKey, LucideIcon> = {
+  dashboard: LayoutDashboard,
+  register: ShoppingCart,
+  products: Package,
+  categories: FolderTree,
+  importExport: FileSpreadsheet,
+  stock: Boxes,
+  adjustments: SlidersHorizontal,
+  stocktakes: ClipboardCheck,
+  purchaseOrders: ClipboardList,
+  receiving: PackageCheck,
+  suppliers: Truck,
+  taxClasses: Percent,
+  devices: MonitorSmartphone,
 };
 
-/** Navigation entries the server decided this user may see. */
-export function NavLinks({ items, onNavigate }: { items: NavKey[]; onNavigate?: () => void }) {
+/** Navigation entries the server decided this user may see, grouped by section. */
+export function NavLinks({ nav, onNavigate }: { nav: VisibleNav; onNavigate?: () => void }) {
   const t = useTranslations("nav");
   const pathname = usePathname();
   return (
-    <ul className="flex flex-col gap-1">
-      {items.map((key) => {
-        const { href, icon: Icon } = ITEMS[key];
-        const active = pathname === href || pathname.startsWith(`${href}/`);
-        return (
-          <li key={key}>
-            <Link
-              href={href}
-              onClick={onNavigate}
-              aria-current={active ? "page" : undefined}
-              className={cn(
-                "relative flex min-h-11 items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground",
-                active &&
-                  "bg-accent font-semibold text-accent-foreground before:absolute before:inset-y-2 before:start-0 before:w-1 before:rounded-full before:bg-ring",
-              )}
+    <div className="flex flex-col gap-4 pb-6">
+      {nav.map((section) => (
+        <div key={section.key} className="flex flex-col gap-1">
+          {section.key === "overview" ? null : (
+            <h2
+              id={`nav-${section.key}`}
+              className="px-3 pt-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase"
             >
-              <Icon className="size-5" aria-hidden />
-              {t(key)}
-            </Link>
-          </li>
-        );
-      })}
-    </ul>
+              {t(`sections.${section.key}`)}
+            </h2>
+          )}
+          <ul
+            className="flex flex-col gap-1"
+            aria-labelledby={section.key === "overview" ? undefined : `nav-${section.key}`}
+          >
+            {section.items.map((key) => {
+              const href = NAV_HREF[key];
+              const Icon = ICONS[key];
+              const active = pathname === href || pathname.startsWith(`${href}/`);
+              return (
+                <li key={key}>
+                  <Link
+                    href={href}
+                    onClick={onNavigate}
+                    aria-current={active ? "page" : undefined}
+                    className={cn(
+                      "relative flex min-h-11 items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground",
+                      active &&
+                        "bg-accent font-semibold text-accent-foreground before:absolute before:inset-y-2 before:start-0 before:w-1 before:rounded-full before:bg-ring",
+                    )}
+                  >
+                    <Icon className="size-5" aria-hidden />
+                    {t(key)}
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
+    </div>
   );
 }

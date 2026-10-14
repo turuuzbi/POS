@@ -1,0 +1,7 @@
+{
+  "search": "Find a product",
+  "searchPlaceholder": "Name, barcode or SKU",
+  "noResults": "No matches.",
+  "onHand": "On hand: {qty}",
+  "searching": "Searching…"
+}

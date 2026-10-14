@@ -1,0 +1,23 @@
+{
+  "label": "Үндсэн цэс",
+  "dashboard": "Хянах самбар",
+  "register": "Касс",
+  "devices": "Төхөөрөмж",
+  "products": "Бараа",
+  "categories": "Ангилал",
+  "importExport": "Импорт, экспорт",
+  "stock": "Үлдэгдэл",
+  "adjustments": "Үлдэгдэл засвар",
+  "stocktakes": "Тооллого",
+  "purchaseOrders": "Захиалга",
+  "receiving": "Хүлээн авалт",
+  "suppliers": "Нийлүүлэгч",
+  "taxClasses": "Татварын ангилал",
+  "sections": {
+    "overview": "Ерөнхий",
+    "catalog": "Бараа",
+    "inventory": "Агуулах",
+    "purchasing": "Худалдан авалт",
+    "settings": "Тохиргоо"
+  }
+}

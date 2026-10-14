@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { LOCALES } from "@/i18n/config";
-import en from "./en.json";
-import mn from "./mn.json";
+import en from "./en";
+import mn from "./mn";
 
 type Tree = { [key: string]: string | Tree };
 const catalogs: Record<(typeof LOCALES)[number], Tree> = { mn, en };

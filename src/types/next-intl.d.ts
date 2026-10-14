@@ -1,4 +1,4 @@
-import type messages from "../../messages/mn.json";
+import type messages from "../../messages/mn";
 import type { Locale } from "@/i18n/config";
 
 declare module "next-intl" {

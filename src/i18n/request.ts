@@ -1,6 +1,11 @@
 import { cookies } from "next/headers";
 import { getRequestConfig } from "next-intl/server";
-import { DEFAULT_TIME_ZONE, LOCALE_COOKIE, resolveLocale } from "./config";
+import { DEFAULT_TIME_ZONE, LOCALE_COOKIE, resolveLocale, type Locale } from "./config";
+
+const CATALOGS: Record<Locale, () => Promise<{ default: Record<string, unknown> }>> = {
+  mn: () => import("../../messages/mn"),
+  en: () => import("../../messages/en"),
+};
 
 /**
  * Locale comes from a cookie (no locale segment in URLs: this is an app, not
@@ -12,6 +17,6 @@ export default getRequestConfig(async () => {
   return {
     locale,
     timeZone: DEFAULT_TIME_ZONE,
-    messages: (await import(`../../messages/${locale}.json`)).default,
+    messages: (await CATALOGS[locale]()).default,
   };
 });

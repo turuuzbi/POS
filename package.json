@@ -20,6 +20,7 @@
     "db:reset": "prisma migrate reset --force && prisma db seed",
     "db:seed": "prisma db seed",
     "auth:unlock": "tsx --conditions=react-server scripts/auth-unlock.ts",
+    "stock:verify": "tsx --conditions=react-server scripts/stock-verify.ts",
     "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm build",
     "postinstall": "prisma generate",
     "vercel-build": "bash scripts/vercel-build.sh"
