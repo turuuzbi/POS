@@ -22,6 +22,8 @@ const nextConfig: NextConfig = {
   // dynamic, and the checkout itself runs client-side (IndexedDB, offline).
   cacheComponents: false,
   poweredByHeader: false,
+  // Product images (<= 2 MB) are uploaded through a server action.
+  experimental: { serverActions: { bodySizeLimit: "3mb" } },
   turbopack: {
     rules: {
       "*.css": {
