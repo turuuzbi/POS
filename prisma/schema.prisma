@@ -1065,6 +1065,10 @@ model Sale {
   buyerTaxId     String? /// B2B e-receipt buyer
   note           String?
   publicToken    String   @unique /// unguessable token for the receipt share link
+  /// SHA-256 of the canonical checkout intent (domain/checkout-contract.ts
+  /// checkoutFingerprint). Replays of the same id with another fingerprint are
+  /// IDEMPOTENCY_CONFLICT. NULL only for sales that predate the column.
+  fingerprint    String?
   /// Immutable fact: an offline sale whose client prices differed from the
   /// server's view. The review queue is `requiresReview AND no SaleReview`.
   requiresReview Boolean  @default(false)
