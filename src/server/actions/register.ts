@@ -2,8 +2,7 @@
 
 import { z } from "zod";
 import type { CatalogEntry } from "@/lib/pos/catalog-entry";
-import { findActiveDevice, readDeviceToken } from "../auth/device";
-import { db } from "../db";
+import type { CurrentUser } from "../auth/session";
 import {
   browseEntries,
   loadEntries,
@@ -11,12 +10,19 @@ import {
   searchEntries,
   type CodeLookup,
 } from "../queries/register";
+import { requireRegisterContext } from "../services/register-context";
 import { defineAction } from "./define-action";
 
-/** Stock is shown for the location of the device the cashier is on. */
-async function deviceLocationId(): Promise<string | null> {
-  const device = await findActiveDevice(db, await readDeviceToken());
-  return device?.locationId ?? null;
+/**
+ * Stock is shown for the location of the device the cashier is on. The device
+ * goes through the same checks as checkout (paired, has a register, the user
+ * may act at its location, and for a PIN session it is the device the session
+ * was opened on), so a user never reads another location's stock.
+ */
+async function deviceLocationId(
+  user: Pick<CurrentUser, "deviceId" | "role" | "locationIds">,
+): Promise<string> {
+  return (await requireRegisterContext(user)).locationId;
 }
 
 /** Search-as-you-type for the register: name, SKU, barcode, PLU. */
@@ -24,8 +30,8 @@ export const searchCatalogAction = defineAction({
   name: "register.search",
   access: "pos.sell",
   input: z.object({ query: z.string().trim().min(1).max(100) }),
-  async run({ input }): Promise<CatalogEntry[]> {
-    return searchEntries(input.query, await deviceLocationId());
+  async run({ input, user }): Promise<CatalogEntry[]> {
+    return searchEntries(input.query, await deviceLocationId(user));
   },
 });
 
@@ -34,8 +40,8 @@ export const lookupCodeAction = defineAction({
   name: "register.lookupCode",
   access: "pos.sell",
   input: z.object({ code: z.string().trim().min(1).max(100) }),
-  async run({ input }): Promise<CodeLookup> {
-    return lookupCode(input.code, await deviceLocationId());
+  async run({ input, user }): Promise<CodeLookup> {
+    return lookupCode(input.code, await deviceLocationId(user));
   },
 });
 
@@ -44,8 +50,8 @@ export const browseCatalogAction = defineAction({
   name: "register.browse",
   access: "pos.sell",
   input: z.object({ categoryId: z.uuid().nullable() }),
-  async run({ input }): Promise<CatalogEntry[]> {
-    return browseEntries(input.categoryId, await deviceLocationId());
+  async run({ input, user }): Promise<CatalogEntry[]> {
+    return browseEntries(input.categoryId, await deviceLocationId(user));
   },
 });
 
@@ -54,7 +60,7 @@ export const refreshEntriesAction = defineAction({
   name: "register.refresh",
   access: "pos.sell",
   input: z.object({ variantIds: z.array(z.uuid()).min(1).max(200) }),
-  async run({ input }): Promise<CatalogEntry[]> {
-    return loadEntries(input.variantIds, await deviceLocationId());
+  async run({ input, user }): Promise<CatalogEntry[]> {
+    return loadEntries(input.variantIds, await deviceLocationId(user));
   },
 });

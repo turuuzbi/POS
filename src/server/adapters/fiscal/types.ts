@@ -23,6 +23,7 @@ export interface FiscalLine {
 }
 
 export interface FiscalSaleRequest {
+  /** The provider idempotency key: retries and takeovers of one sale must send the same id. */
   saleId: string;
   receiptNumber: string;
   issuedAt: Date;
