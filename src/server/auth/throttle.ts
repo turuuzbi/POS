@@ -141,7 +141,7 @@ export async function reserveAttempt(
       ON CONFLICT ("key") DO NOTHING`;
     await tx.$queryRaw`
       SELECT "key" FROM "AuthThrottle" WHERE "key" = ANY(${keys}::text[])
-      ORDER BY "key" FOR UPDATE`;
+      ORDER BY "key" COLLATE "C" FOR UPDATE`;
     const rows = await tx.authThrottle.findMany({ where: { key: { in: keys } } });
     const state = new Map(
       rows.map((row) => {
@@ -202,23 +202,27 @@ export async function settleSuccess(
   clear: string[] = [],
 ): Promise<void> {
   const refunds = [...reservation.counted].filter(([key]) => !clear.includes(key));
-  await client.$transaction([
-    ...refunds.flatMap(([key, counted]) => [
-      client.authThrottle.updateMany({
+  const lockKeys = [...new Set([...refunds.map(([key]) => key), ...clear])].sort();
+  if (lockKeys.length === 0) return;
+  await client.$transaction(async (tx) => {
+    // Same lock order as reserveAttempt (byte order), so the two can't deadlock.
+    await tx.$queryRaw`
+      SELECT "key" FROM "AuthThrottle" WHERE "key" = ANY(${lockKeys}::text[])
+      ORDER BY "key" COLLATE "C" FOR UPDATE`;
+    for (const [key, counted] of refunds) {
+      await tx.authThrottle.updateMany({
         where: { key, windowStart: counted.windowStart, failures: { gt: 0 } },
         data: { failures: { decrement: 1 } },
-      }),
-      ...(counted.setLock
-        ? [
-            client.authThrottle.updateMany({
-              where: { key, lockedUntil: counted.setLock.lockedUntil },
-              data: { lockedUntil: counted.setLock.previous },
-            }),
-          ]
-        : []),
-    ]),
-    client.authThrottle.deleteMany({ where: { key: { in: clear } } }),
-  ]);
+      });
+      if (counted.setLock) {
+        await tx.authThrottle.updateMany({
+          where: { key, lockedUntil: counted.setLock.lockedUntil },
+          data: { lockedUntil: counted.setLock.previous },
+        });
+      }
+    }
+    if (clear.length > 0) await tx.authThrottle.deleteMany({ where: { key: { in: clear } } });
+  });
 }
 
 export async function isTrustedSource(client: Db, key: string): Promise<boolean> {
