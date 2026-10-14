@@ -1,1 +1,65 @@
-{}
+{
+  "title": "Receipt",
+  "publicTitle": "Sales receipt",
+  "receiptNo": "Receipt no.",
+  "date": "Date",
+  "cashier": "Cashier",
+  "taxId": "Tax ID",
+  "buyerTaxId": "Buyer tax ID",
+  "phone": "Phone",
+  "subtotal": "Total",
+  "discount": "Discount (included)",
+  "lineDiscount": "Discount",
+  "vatRate": "VAT {rate}%",
+  "vatZero": "VAT 0% sales",
+  "vatExempt": "VAT exempt",
+  "cityTaxRate": "City tax {rate}%",
+  "net": "Net amount",
+  "tip": "Tip",
+  "rounding": "Rounding",
+  "total": "Amount due",
+  "tendered": "Cash given",
+  "change": "Change",
+  "voided": "VOIDED",
+  "lottery": "Lottery number",
+  "fiscalPending": "E-receipt is being registered",
+  "fiscalFailed": "E-receipt not registered",
+  "fiscalCancelled": "E-receipt cancelled",
+  "defaultFooter": "Thank you for your purchase!",
+  "method": {
+    "CASH": "Cash",
+    "CARD": "Card",
+    "QPAY": "QPay",
+    "BANK_TRANSFER": "Bank transfer",
+    "GIFT_CARD": "Gift card",
+    "STORE_CREDIT": "Store credit",
+    "EXCHANGE_CREDIT": "Exchange credit"
+  },
+  "unit": {
+    "PIECE": "pcs",
+    "KG": "kg",
+    "LITER": "l",
+    "METER": "m"
+  },
+  "actions": {
+    "print": "Print",
+    "shareLink": "Copy link",
+    "linkCopied": "Link copied.",
+    "copyFailed": "Could not copy. Copy the link manually.",
+    "downloadPdf": "Download PDF",
+    "backToRegister": "Back to register",
+    "toolbar": "Receipt actions"
+  },
+  "paper": {
+    "label": "Paper width",
+    "mm80": "80 mm",
+    "mm58": "58 mm"
+  },
+  "notFound": {
+    "title": "Receipt not found",
+    "description": "The link is wrong or the receipt does not exist."
+  },
+  "pdf": {
+    "title": "Receipt {number}"
+  }
+}

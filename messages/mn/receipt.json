@@ -1,1 +1,65 @@
-{}
+{
+  "title": "Баримт",
+  "publicTitle": "Борлуулалтын баримт",
+  "receiptNo": "Баримт №",
+  "date": "Огноо",
+  "cashier": "Кассчин",
+  "taxId": "ТТД",
+  "buyerTaxId": "Худалдан авагчийн ТТД",
+  "phone": "Утас",
+  "subtotal": "Нийт дүн",
+  "discount": "Хөнгөлөлт (дүнд шингэсэн)",
+  "lineDiscount": "Хөнгөлөлт",
+  "vatRate": "НӨАТ {rate}%",
+  "vatZero": "НӨАТ 0%-ийн борлуулалт",
+  "vatExempt": "НӨАТ-аас чөлөөлөгдөх",
+  "cityTaxRate": "НХАТ {rate}%",
+  "net": "Татваргүй дүн",
+  "tip": "Шагнал",
+  "rounding": "Тоймлол",
+  "total": "Төлөх дүн",
+  "tendered": "Өгсөн мөнгө",
+  "change": "Хариулт",
+  "voided": "ХҮЧИНГҮЙ БОЛГОСОН",
+  "lottery": "Сугалааны дугаар",
+  "fiscalPending": "И-баримт бүртгэгдэж байна",
+  "fiscalFailed": "И-баримт бүртгэгдээгүй",
+  "fiscalCancelled": "И-баримт цуцлагдсан",
+  "defaultFooter": "Худалдан авалт хийсэнд баярлалаа!",
+  "method": {
+    "CASH": "Бэлэн мөнгө",
+    "CARD": "Карт",
+    "QPAY": "QPay",
+    "BANK_TRANSFER": "Банкны шилжүүлэг",
+    "GIFT_CARD": "Бэлгийн карт",
+    "STORE_CREDIT": "Дэлгүүрийн үлдэгдэл",
+    "EXCHANGE_CREDIT": "Солилтын үлдэгдэл"
+  },
+  "unit": {
+    "PIECE": "ш",
+    "KG": "кг",
+    "LITER": "л",
+    "METER": "м"
+  },
+  "actions": {
+    "print": "Хэвлэх",
+    "shareLink": "Холбоос хуулах",
+    "linkCopied": "Холбоосыг хууллаа.",
+    "copyFailed": "Хуулж чадсангүй. Холбоосыг гараар хуулна уу.",
+    "downloadPdf": "PDF татах",
+    "backToRegister": "Касс руу буцах",
+    "toolbar": "Баримтын үйлдлүүд"
+  },
+  "paper": {
+    "label": "Цаасны өргөн",
+    "mm80": "80 мм",
+    "mm58": "58 мм"
+  },
+  "notFound": {
+    "title": "Баримт олдсонгүй",
+    "description": "Холбоос буруу эсвэл баримт байхгүй байна."
+  },
+  "pdf": {
+    "title": "Баримт {number}"
+  }
+}
