@@ -1,5 +1,6 @@
 import { randomInt } from "node:crypto";
 import { expect, type Locator, type Page } from "@playwright/test";
+import { ean13CheckDigit } from "../../../src/domain/scale-barcode";
 import { withE2eDb } from "../db";
 import { mn } from "../fixtures";
 
@@ -9,7 +10,11 @@ export const t = mn.purchasing;
 export const token = () => Math.random().toString(36).slice(2, 8);
 
 /** Digits-only code, unique enough for a shared database. */
-export const barcode = () => `88${randomInt(10_000_000_000)}`.padEnd(12, "0");
+/** A unique EAN-13 with a valid check digit (the CSV round trip re-validates every code). */
+export const barcode = () => {
+  const body = `98${String(randomInt(10_000_000_000)).padStart(10, "0")}`;
+  return body + ean13CheckDigit(body);
+};
 
 export async function query<T = Record<string, unknown>>(
   sql: string,
