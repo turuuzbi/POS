@@ -793,8 +793,9 @@ model StocktakeLine {
   id            String   @id @default(uuid(7)) @db.Uuid
   stocktakeId   String   @db.Uuid
   variantId     String   @db.Uuid
-  countedMilli  Int
-  expectedMilli Int? /// on-hand snapshot taken at completion
+  countedMilli  Int? /// null = not counted yet
+  expectedMilli Int? /// on-hand snapshot taken when the line was added to the count
+  varianceMilli Int? /// delta actually posted on completion (computed under lock)
   updatedAt     DateTime @updatedAt
 
   stocktake Stocktake      @relation(fields: [stocktakeId], references: [id], onDelete: Cascade)
