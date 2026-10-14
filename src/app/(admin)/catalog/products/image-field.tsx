@@ -77,7 +77,7 @@ export function ImageField({
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
       <div className="flex size-28 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-muted">
         {shown ? (
-          // eslint-disable-next-line @next/next/no-img-element -- user upload, served by our own route or Blob
+          // eslint-disable-next-line @next/next/no-img-element -- user upload, served by our own route or R2
           <img src={shown} alt={t("imageAlt")} className="size-full object-cover" />
         ) : (
           <ImageIcon className="size-8 text-muted-foreground" aria-hidden />

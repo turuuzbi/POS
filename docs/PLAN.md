@@ -40,7 +40,7 @@ src/
       payments/  (PaymentProvider: qpay-mock, …)
       fiscal/    (FiscalProvider:  ebarimt-mock)
       messaging/ (SMS/email: console-mock)
-      storage/   (images: Vercel Blob / local)
+      storage/   (images: Cloudflare R2 / local)
   offline/                            Dexie schema, outbox, sync, SW registration
   components/ui (shadcn) · components/pos · components/admin
 messages/mn.json · messages/en.json

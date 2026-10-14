@@ -1,15 +1,15 @@
 import "server-only";
-import { createBlobStorage } from "./blob";
 import { localStorage } from "./local";
+import { createR2Storage, r2ConfigFromEnv } from "./r2";
 import type { StorageProvider } from "./types";
 
 export type { StorageProvider } from "./types";
 
 /**
- * Vercel Blob when BLOB_READ_WRITE_TOKEN is set (production), otherwise
+ * Cloudflare R2 when the R2_* variables are set (production), otherwise
  * local disk under .data/uploads (development, tests, single-box installs).
  */
 export function getStorage(): StorageProvider {
-  const token = process.env.BLOB_READ_WRITE_TOKEN;
-  return token ? createBlobStorage(token) : localStorage;
+  const config = r2ConfigFromEnv();
+  return config ? createR2Storage(config) : localStorage;
 }

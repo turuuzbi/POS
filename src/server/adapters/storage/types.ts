@@ -1,6 +1,6 @@
-/** Where uploaded files (product images) live. Implementations: local disk, Vercel Blob. */
+/** Where uploaded files (product images) live. Implementations: local disk, Cloudflare R2. */
 export interface StorageProvider {
-  readonly name: "local" | "blob";
+  readonly name: "local" | "r2";
   /** Store `body` under `key` (e.g. "products/<uuid>.png"); returns the URL to save and serve. */
   put(key: string, body: Uint8Array, contentType: string): Promise<string>;
   /** Remove a file previously returned by `put`. Missing files and foreign URLs are ignored. */
