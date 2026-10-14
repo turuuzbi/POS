@@ -48,6 +48,8 @@ export default defineConfig({
           ? `pnpm start --port ${PORT}`
           : `pnpm build && pnpm start --port ${PORT}`,
         url: `${baseURL}/login`,
+        // Lets the register specs read an OPEN Shift row they insert, before the shifts service exists.
+        env: { POS_E2E_SHIFT_FALLBACK: "1" },
         reuseExistingServer: !process.env.CI,
         timeout: 300_000,
       },
