@@ -1,6 +1,8 @@
 import "server-only";
+import { canAccessLocation } from "@/domain/access";
 import { Prisma } from "@/generated/prisma/client";
 import { audit } from "../audit";
+import type { CurrentUser } from "../auth/session";
 import { getFiscalProvider } from "../adapters/fiscal";
 import type { FiscalSaleRequest } from "../adapters/fiscal/types";
 import { getMessagingProvider } from "../adapters/messaging";
@@ -187,4 +189,34 @@ export async function deliverReceipt(input: {
     });
     return { id: delivery.id, status: "FAILED" };
   }
+}
+
+/** A receipt may be re-sent a few times (typo in the number), not used to spam a destination. */
+const MAX_DELIVERIES_PER_SALE = 5;
+
+/**
+ * Send the receipt link of a committed sale to a customer. The sale must be
+ * at a location the user may act in (anything else looks like a missing
+ * sale). `baseUrl` is the app's public origin; the link is built here from
+ * Sale.publicToken, never taken from the client.
+ */
+export async function sendSaleReceipt(
+  input: { saleId: string; channel: MessageChannel; destination: string },
+  user: Pick<CurrentUser, "role" | "locationIds">,
+  baseUrl: string,
+): Promise<{ id: string; status: "SENT" | "FAILED" }> {
+  const sale = await db.sale.findUnique({
+    where: { id: input.saleId },
+    select: { locationId: true, publicToken: true },
+  });
+  if (!sale || !canAccessLocation(user, sale.locationId)) throw new ActionError("NOT_FOUND");
+  const sent = await db.receiptDelivery.count({ where: { saleId: input.saleId } });
+  if (sent >= MAX_DELIVERIES_PER_SALE) throw new ActionError("RATE_LIMITED");
+  const origin = baseUrl.replace(/\/+$/, "");
+  return deliverReceipt({
+    saleId: input.saleId,
+    channel: input.channel,
+    destination: input.destination,
+    shareUrl: `${origin}/r/${encodeURIComponent(sale.publicToken)}`,
+  });
 }

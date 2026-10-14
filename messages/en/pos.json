@@ -201,7 +201,10 @@
     "email": "Email (optional)",
     "phone": "Phone (optional)",
     "receipt": "Receipt",
-    "newSale": "New sale"
+    "newSale": "New sale",
+    "send": "Send",
+    "sentTo": "Receipt sent to {destination}",
+    "sendFailed": "The receipt could not be sent. Try again."
   },
   "held": {
     "title": "Held carts",

@@ -4,10 +4,13 @@ import { CheckCircle2, FileText } from "lucide-react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { useId, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useAction } from "@/hooks/use-action";
 import type { CheckoutResult } from "@/domain/checkout-contract";
+import { sendReceiptAction } from "@/server/actions/receipts";
 import { PosDialog } from "./pos-dialog";
 import { useFormat } from "./use-format";
 
@@ -27,11 +30,22 @@ export function SuccessDialog({
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
 
-  const params = new URLSearchParams();
-  if (email.trim()) params.set("email", email.trim());
-  if (phone.trim()) params.set("phone", phone.trim());
-  const query = params.toString();
-  const receiptHref = `/receipt/${result.saleId}${query ? `?${query}` : ""}`;
+  const receiptHref = `/receipt/${result.saleId}`;
+  const { run, pending, errorMessage } = useAction(sendReceiptAction);
+
+  const send = (channel: "EMAIL" | "SMS", destination: string) => {
+    const to = destination.trim();
+    if (!to || pending) return;
+    run(
+      { saleId: result.saleId, channel, destination: to },
+      {
+        onSuccess: (sent) =>
+          sent.status === "SENT"
+            ? toast.success(t("sentTo", { destination: to }))
+            : toast.error(t("sendFailed")),
+      },
+    );
+  };
 
   return (
     <PosDialog
@@ -75,24 +89,51 @@ export function SuccessDialog({
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1">
           <Label htmlFor={emailId}>{t("email")}</Label>
-          <Input
-            id={emailId}
-            type="email"
-            autoComplete="off"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-          />
+          <div className="flex gap-2">
+            <Input
+              id={emailId}
+              type="email"
+              autoComplete="off"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              disabled={pending || !email.trim()}
+              aria-label={`${t("send")}: ${t("email")}`}
+              onClick={() => send("EMAIL", email)}
+            >
+              {t("send")}
+            </Button>
+          </div>
         </div>
         <div className="space-y-1">
           <Label htmlFor={phoneId}>{t("phone")}</Label>
-          <Input
-            id={phoneId}
-            type="tel"
-            autoComplete="off"
-            value={phone}
-            onChange={(event) => setPhone(event.target.value)}
-          />
+          <div className="flex gap-2">
+            <Input
+              id={phoneId}
+              type="tel"
+              autoComplete="off"
+              value={phone}
+              onChange={(event) => setPhone(event.target.value)}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              disabled={pending || !phone.trim()}
+              aria-label={`${t("send")}: ${t("phone")}`}
+              onClick={() => send("SMS", phone)}
+            >
+              {t("send")}
+            </Button>
+          </div>
         </div>
+        {errorMessage ? (
+          <p role="alert" className="text-sm text-destructive sm:col-span-2">
+            {errorMessage}
+          </p>
+        ) : null}
       </div>
 
       <div className="grid gap-2 sm:grid-cols-2">
