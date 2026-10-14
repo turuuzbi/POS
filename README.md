@@ -73,6 +73,7 @@ The `pos-staging` Vercel project deploys every push to the repository's default 
 | `pnpm db:deploy`                         | Apply pending migrations (CI and production)                                                                                 |
 | `pnpm db:seed`                           | Idempotent demo data                                                                                                         |
 | `pnpm auth:unlock <email>`               | Clear every password sign-in lock on one account (recovery after an attack)                                                  |
+| `pnpm stock:verify [--rebuild]`          | Check every StockLevel against the movement ledger; `--rebuild` rewrites drifted caches from the ledger                      |
 | `pnpm check`                             | typecheck, lint, all Vitest tests, build                                                                                     |
 
 Integration tests refuse to run unless the database name ends in `_test`.

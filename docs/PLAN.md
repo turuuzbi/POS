@@ -1,6 +1,6 @@
 # POS: plan
 
-Status: **approved 2026-10-12. Phase 0 is done.** The data model is in [`prisma/schema.prisma`](../prisma/schema.prisma).
+Status: **approved 2026-10-12. Phases 0 and 1 (catalog + inventory ledger) are done.** The data model is in [`prisma/schema.prisma`](../prisma/schema.prisma).
 
 ---
 
