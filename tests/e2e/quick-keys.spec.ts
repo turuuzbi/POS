@@ -86,6 +86,7 @@ test("owner adds, recolours, reorders and removes keys; the preview follows", as
   await expect.poll(() => rowNames(page)).toEqual([b, c, a]);
   expect(await previewNames(page)).toEqual([b, c, a]);
   await page.reload();
+  await expect(rows(page)).toHaveCount(3);
   expect(await rowNames(page)).toEqual([b, c, a]);
   expect(await previewNames(page)).toEqual([b, c, a]);
 

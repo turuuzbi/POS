@@ -49,7 +49,9 @@ export default defineConfig({
           : `pnpm build && pnpm start --port ${PORT}`,
         url: `${baseURL}/login`,
         // Lets the register specs read an OPEN Shift row they insert, before the shifts service exists.
-        env: { POS_E2E_SHIFT_FALLBACK: "1" },
+        // MOCK_QPAY_AUTOPAY_SECONDS: a production build never auto-pays mock QPay invoices
+        // unless told to, and the dev-only mock-pay route is off, so e2e opts in.
+        env: { POS_E2E_SHIFT_FALLBACK: "1", MOCK_QPAY_AUTOPAY_SECONDS: "3" },
         reuseExistingServer: !process.env.CI,
         timeout: 300_000,
       },

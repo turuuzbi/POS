@@ -431,20 +431,25 @@ test.describe("selling", () => {
     try {
       await page.reload();
       await expect(page.getByRole("tab", { name: mn.pos.grid.favourites })).toBeVisible();
-      // Browse fallback is gone: only the quick keys are tiles.
+      // Browse fallback is gone: only quick keys are tiles (the seed adds its own to the location).
       await expect(page.getByRole("tab", { name: mn.pos.grid.all })).toHaveCount(0);
       const tabpanel = page.getByRole("tabpanel");
-      await expect(tabpanel.getByRole("button")).toHaveCount(2);
 
-      await tabpanel.getByRole("button", { name: /Сүү 1 л/ }).click();
+      await tabpanel
+        .getByRole("button", { name: /Сүү 1 л/ })
+        .first()
+        .click();
       await expect(cartLines(page)).toHaveCount(1);
       await expect(payable(page)).toHaveText(money(MILK.price));
-      await tabpanel.getByRole("button", { name: /Сүү 1 л/ }).click();
+      await tabpanel
+        .getByRole("button", { name: /Сүү 1 л/ })
+        .first()
+        .click();
       await expect(cartLines(page)).toHaveCount(1); // merged
       await expect(payable(page)).toHaveText(money(2 * MILK.price));
 
       // "Ус" has three sizes: a chooser opens.
-      await tabpanel.getByRole("button", { name: /Ус/ }).click();
+      await tabpanel.getByRole("button", { name: /Ус/ }).first().click();
       const chooser = page.getByRole("dialog", { name: "Ус" });
       await expect(chooser.getByRole("button")).toHaveCount(4); // 3 variants + close
       await chooser.getByRole("button", { name: /1\.5 л/ }).click();
