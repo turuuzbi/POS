@@ -71,7 +71,7 @@ export async function LowStockCard({ user }: { user: Pick<CurrentUser, "location
                 <span />
               )}
               <Link
-                href="/inventory/stock?low=1"
+                href={`/inventory/stock?low=1&location=${items[0]!.locationId}`}
                 className="font-medium underline-offset-4 hover:underline focus-visible:underline"
               >
                 {t("lowStock.viewAll")}
