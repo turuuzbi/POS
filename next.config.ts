@@ -24,6 +24,10 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   // Product images (<= 2 MB) are uploaded through a server action.
   experimental: { serverActions: { bodySizeLimit: "3mb" } },
+  // The receipt PDF reads its bundled fonts from disk at request time.
+  outputFileTracingIncludes: {
+    "/api/receipts/[token]/pdf": ["./src/server/assets/fonts/*.ttf"],
+  },
   turbopack: {
     rules: {
       "*.css": {
