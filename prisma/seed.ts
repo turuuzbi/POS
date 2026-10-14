@@ -8,6 +8,7 @@
 import { fromMajor } from "@/domain/money";
 import { units } from "@/domain/qty";
 import { ean13CheckDigit, normalizePlu } from "@/domain/scale-barcode";
+import { MAX_QUICK_KEYS_PER_TAB, toTileColor } from "@/domain/quick-keys";
 import { hashPassword } from "@/server/auth/password";
 import { pinLookup } from "@/server/auth/pin";
 import { db } from "@/server/db";
@@ -201,6 +202,62 @@ async function seedOpeningStock(locationId: string, createdById: string) {
   return variants.length;
 }
 
+/** Products on the favourites tab, and per category tab at most. */
+const FAVOURITES = 20;
+const PER_CATEGORY_TAB = 8;
+
+/**
+ * A starter quick-key grid for the location: a favourites tab (the first
+ * products of each category in turn, ~20) plus a tab per category. Skipped
+ * once the location has any quick key, so a manager's edits are never undone.
+ */
+async function seedQuickKeys(locationId: string) {
+  if ((await db.quickKey.count({ where: { locationId } })) > 0) return 0;
+  const products = await db.product.findMany({
+    where: { isActive: true, type: "STANDARD", categoryId: { not: null } },
+    select: { id: true, categoryId: true, category: { select: { color: true } } },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
+  const byCategory = new Map<string, typeof products>();
+  for (const product of products) {
+    const list = byCategory.get(product.categoryId!) ?? [];
+    list.push(product);
+    byCategory.set(product.categoryId!, list);
+  }
+  const rows: {
+    locationId: string;
+    categoryId: string | null;
+    productId: string;
+    position: number;
+    color: string | null;
+  }[] = [];
+  const colorOf = (p: (typeof products)[number]) => toTileColor(p.category?.color);
+  // Favourites: round-robin over categories so every aisle is represented.
+  const queues = [...byCategory.values()].map((list) => [...list]);
+  const favourites: typeof products = [];
+  const limit = Math.min(FAVOURITES, MAX_QUICK_KEYS_PER_TAB);
+  for (let progressed = true; progressed && favourites.length < limit;) {
+    progressed = false;
+    for (const queue of queues) {
+      const next = queue.shift();
+      if (next && favourites.length < limit) {
+        favourites.push(next);
+        progressed = true;
+      }
+    }
+  }
+  for (const [position, p] of favourites.entries()) {
+    rows.push({ locationId, categoryId: null, productId: p.id, position, color: colorOf(p) });
+  }
+  for (const [categoryId, list] of byCategory) {
+    for (const [position, p] of list.slice(0, PER_CATEGORY_TAB).entries()) {
+      rows.push({ locationId, categoryId, productId: p.id, position, color: colorOf(p) });
+    }
+  }
+  await db.quickKey.createMany({ data: rows });
+  return rows.length;
+}
+
 async function main() {
   if (process.env.NODE_ENV === "production" && process.env.SEED_ALLOW_PRODUCTION !== "1") {
     throw new Error(
@@ -218,9 +275,12 @@ async function main() {
   console.warn("Seeding opening stock…");
   const stocked = await seedOpeningStock(location.id, owner.id);
 
+  console.warn("Seeding quick keys…");
+  const quickKeys = await seedQuickKeys(location.id);
+
   console.warn(
     `Seed complete: ${created} new products (${SEED_PRODUCTS.length} in catalog), ` +
-      `opening stock for ${stocked} variants.`,
+      `opening stock for ${stocked} variants, ${quickKeys} new quick keys.`,
   );
   console.warn("Development sign-in (change these before any real use):");
   for (const member of STAFF) {
