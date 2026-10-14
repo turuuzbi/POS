@@ -56,12 +56,21 @@ export function TaxClassDialog({
   );
   const standard = treatment === "STANDARD";
 
+  /** Back to the saved values (or the blank form), so cancelled edits never linger. */
+  const resetFields = () => {
+    setName(taxClass?.name ?? "");
+    setTreatment(taxClass?.treatment ?? "STANDARD");
+    setVatRate(initialVat);
+    setCityTaxRate(taxClass ? bpsToPercent(taxClass.cityTaxRateBps) : "0");
+  };
+
   return (
     <Dialog
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
-        if (!next) reset();
+        if (next) resetFields();
+        else reset();
       }}
     >
       <DialogTrigger asChild>{trigger}</DialogTrigger>
@@ -88,12 +97,6 @@ export function TaxClassDialog({
                 onSuccess: () => {
                   toast.success(tc("saved"));
                   setOpen(false);
-                  if (!taxClass) {
-                    setName("");
-                    setTreatment("STANDARD");
-                    setVatRate("10");
-                    setCityTaxRate("0");
-                  }
                   router.refresh();
                 },
               },

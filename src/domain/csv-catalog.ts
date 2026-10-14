@@ -292,7 +292,11 @@ export function productToCsv(product: ExportProduct, withCosts: boolean): string
     .join("");
 }
 
-/** Downloadable example: a simple product and one with two variants. */
+/**
+ * Downloadable example: a simple product and one with two variants. Category
+ * and tax class are left blank (default tax class applies) so the untouched
+ * template imports on any business, whatever its categories and tax classes.
+ */
 export function templateCsv(withCosts: boolean): string {
   const base = {
     description: null,
@@ -323,8 +327,8 @@ export function templateCsv(withCosts: boolean): string {
       id: "talh",
       name: "Талх",
       description: "Шинэхэн талх",
-      categoryPath: "Хүнс",
-      taxClassName: "НӨАТ 10%",
+      categoryPath: null,
+      taxClassName: "",
       optionNames: [],
       variants: [
         variant({ sku: "TALH-1", barcodes: ["8650001000015"], price: 250000n, cost: 150000n }),
@@ -334,8 +338,8 @@ export function templateCsv(withCosts: boolean): string {
       ...base,
       id: "tsamts",
       name: "Цамц",
-      categoryPath: "Хувцас",
-      taxClassName: "НӨАТ 10%",
+      categoryPath: null,
+      taxClassName: "",
       optionNames: ["Хэмжээ"],
       variants: [
         variant({ sku: "TS-S", option1: "S", price: 2500000n, cost: 1200000n }),
