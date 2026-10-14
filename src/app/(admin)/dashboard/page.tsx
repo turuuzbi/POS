@@ -1,10 +1,13 @@
 import { ArrowRight, MonitorSmartphone, ShoppingCart, Sparkles } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Suspense } from "react";
 import { getTranslations } from "next-intl/server";
 import { EmptyState } from "@/components/app/empty-state";
 import { PageHeader } from "@/components/app/page-header";
+import { LowStockCard } from "@/components/inventory/low-stock-card";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { hasPermission } from "@/domain/permissions";
 import { requireUser } from "@/server/auth/session";
 
@@ -58,6 +61,11 @@ export default async function DashboardPage() {
           </li>
         ))}
       </ul>
+      {hasPermission(user.role, "inventory.view") ? (
+        <Suspense fallback={<Skeleton className="h-48" />}>
+          <LowStockCard user={user} />
+        </Suspense>
+      ) : null}
       <EmptyState
         icon={Sparkles}
         title={t("dashboard.comingSoonTitle")}

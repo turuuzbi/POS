@@ -1,4 +1,67 @@
 {
   "title": "Stock",
-  "description": "Stock on hand and movements at each location."
+  "description": "Stock on hand and movements at each location.",
+  "location": "Location",
+  "search": "Search",
+  "searchPlaceholder": "Name, SKU or barcode",
+  "lowOnly": "Low stock only",
+  "apply": "Filter",
+  "listHeading": "Stock list",
+  "product": "Product",
+  "sku": "SKU",
+  "onHand": "On hand",
+  "reorderPoint": "Reorder point",
+  "avgCost": "Average cost",
+  "value": "Value",
+  "status": "Status",
+  "low": "Low",
+  "ok": "OK",
+  "noReorderPoint": "Not set",
+  "resultCount": "{count, plural, =0 {No products found} one {# product} other {# products}}",
+  "empty": "No products yet.",
+  "emptyDescription": "Stock-tracked products will appear here once they are added.",
+  "noResults": "No products match your search.",
+  "noResultsDescription": "Change the search or clear the filter.",
+  "noLocations": "You have no location assigned.",
+  "noLocationsDescription": "Ask an owner to give you access to a location.",
+  "viewHistory": "View history",
+  "historyFor": "{name}: movement history",
+  "backToStock": "Back to stock",
+  "ledgerHeading": "Movement history",
+  "ledgerEmpty": "No movements recorded for this product.",
+  "reorderQty": "Reorder quantity",
+  "col": {
+    "date": "Date",
+    "type": "Type",
+    "change": "Change",
+    "balance": "Balance",
+    "unitCost": "Unit cost",
+    "reference": "Reference",
+    "user": "By",
+    "note": "Note"
+  },
+  "types": {
+    "OPENING": "Opening stock",
+    "SALE": "Sale",
+    "SALE_VOID": "Sale void",
+    "RETURN_RESTOCK": "Return (restocked)",
+    "PURCHASE_RECEIPT": "Goods receipt",
+    "ADJUSTMENT": "Adjustment",
+    "STOCKTAKE": "Stocktake"
+  },
+  "ref": {
+    "sale": "Sale {id}",
+    "refund": "Refund {id}",
+    "goodsReceipt": "Receipt {number}",
+    "adjustment": "Adjustment {id}",
+    "stocktake": "Stocktake {number}"
+  },
+  "lowStock": {
+    "title": "Low stock",
+    "summary": "{count, plural, =0 {No low-stock items} one {# item at its reorder point} other {# items at their reorder point}}",
+    "none": "Everything is sufficiently stocked.",
+    "level": "{qty} / {point}",
+    "more": "{count} more",
+    "viewAll": "View all"
+  }
 }

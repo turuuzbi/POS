@@ -1,4 +1,67 @@
 {
   "title": "Үлдэгдэл",
-  "description": "Салбар бүрийн барааны үлдэгдэл, хөдөлгөөн."
+  "description": "Салбар бүрийн барааны үлдэгдэл, хөдөлгөөн.",
+  "location": "Салбар",
+  "search": "Хайх",
+  "searchPlaceholder": "Нэр, SKU эсвэл баркод",
+  "lowOnly": "Дутагдалтай бараа",
+  "apply": "Шүүх",
+  "listHeading": "Үлдэгдлийн жагсаалт",
+  "product": "Бараа",
+  "sku": "SKU",
+  "onHand": "Үлдэгдэл",
+  "reorderPoint": "Захиалгын түвшин",
+  "avgCost": "Дундаж өртөг",
+  "value": "Өртгөөр",
+  "status": "Төлөв",
+  "low": "Дутагдалтай",
+  "ok": "Хэвийн",
+  "noReorderPoint": "Тохируулаагүй",
+  "resultCount": "{count, plural, =0 {Бараа олдсонгүй} other {Нийт # бараа}}",
+  "empty": "Бараа алга байна.",
+  "emptyDescription": "Үлдэгдэл хөтлөх бараа бүртгэгдсэний дараа энд харагдана.",
+  "noResults": "Хайлтад тохирох бараа олдсонгүй.",
+  "noResultsDescription": "Хайлтаа өөрчилж эсвэл шүүлтүүрийг арилгана уу.",
+  "noLocations": "Танд салбар оноогоогүй байна.",
+  "noLocationsDescription": "Эзэмшигчээс салбарын эрх авна уу.",
+  "viewHistory": "Түүх харах",
+  "historyFor": "{name}: хөдөлгөөний түүх",
+  "backToStock": "Үлдэгдэл рүү буцах",
+  "ledgerHeading": "Хөдөлгөөний түүх",
+  "ledgerEmpty": "Энэ бараанд хөдөлгөөн бүртгэгдээгүй байна.",
+  "reorderQty": "Захиалах хэмжээ",
+  "col": {
+    "date": "Огноо",
+    "type": "Төрөл",
+    "change": "Өөрчлөлт",
+    "balance": "Үлдэгдэл",
+    "unitCost": "Нэгж өртөг",
+    "reference": "Баримт",
+    "user": "Хэн",
+    "note": "Тэмдэглэл"
+  },
+  "types": {
+    "OPENING": "Эхний үлдэгдэл",
+    "SALE": "Борлуулалт",
+    "SALE_VOID": "Борлуулалт цуцлалт",
+    "RETURN_RESTOCK": "Буцаалт (агуулахад)",
+    "PURCHASE_RECEIPT": "Бараа хүлээн авалт",
+    "ADJUSTMENT": "Үлдэгдэл засвар",
+    "STOCKTAKE": "Тооллого"
+  },
+  "ref": {
+    "sale": "Борлуулалт {id}",
+    "refund": "Буцаалт {id}",
+    "goodsReceipt": "Хүлээн авалт {number}",
+    "adjustment": "Засвар {id}",
+    "stocktake": "Тооллого {number}"
+  },
+  "lowStock": {
+    "title": "Дутагдалтай бараа",
+    "summary": "{count, plural, =0 {Дутагдалтай бараа алга} other {# бараа захиалгын түвшинд хүрсэн}}",
+    "none": "Бүх бараа хангалттай байна.",
+    "level": "{qty} / {point}",
+    "more": "Бусад {count} бараа",
+    "viewAll": "Бүгдийг харах"
+  }
 }
