@@ -25,6 +25,20 @@ export type TenderMethod = (typeof TENDER_METHODS)[number];
 
 export const MAX_TENDERS = 6;
 
+/** Sanity cap on change for one cash tender: 500 000₮. */
+export const MAX_CASH_CHANGE: Money = fromMajor(500_000);
+
+/**
+ * Cash unit to pass as `TenderOptions.cashUnit` for a business's
+ * `totalRoundingUnit`: payable is a multiple of the rounding unit, so the cash
+ * unit must divide it. Coins are never smaller than 1 möngö or bigger than 1₮.
+ */
+export function cashUnitForRounding(totalRoundingUnit: Money): Money {
+  return totalRoundingUnit > 0n && totalRoundingUnit < MINOR_PER_MAJOR
+    ? totalRoundingUnit
+    : MINOR_PER_MAJOR;
+}
+
 export interface Tender {
   method: TenderMethod;
   amount: Money;
@@ -36,6 +50,8 @@ export interface Tender {
 export type TenderIssueCode =
   | "TOO_MANY_TENDERS"
   | "NON_POSITIVE_AMOUNT"
+  | "INVALID_TENDERED"
+  | "CHANGE_TOO_LARGE"
   | "TENDERED_NOT_CASH"
   | "TENDERED_LESS_THAN_AMOUNT"
   | "CASH_NOT_IN_UNITS"
@@ -66,6 +82,8 @@ export interface TenderOptions {
   /** Smallest cash denomination in möngö. Default 100 (1₮). */
   cashUnit?: Money;
   maxTenders?: number;
+  /** Largest change a single cash tender may produce. Default MAX_CASH_CHANGE. */
+  maxChange?: Money;
 }
 
 export function validateTenders(
@@ -73,16 +91,22 @@ export function validateTenders(
   tenders: readonly Tender[],
   options: TenderOptions = {},
 ): TenderValidation {
-  const { cashUnit = MINOR_PER_MAJOR, maxTenders = MAX_TENDERS } = options;
+  const {
+    cashUnit = MINOR_PER_MAJOR,
+    maxTenders = MAX_TENDERS,
+    maxChange = MAX_CASH_CHANGE,
+  } = options;
   if (payable < 0n) throw new RangeError("validateTenders: payable must not be negative");
   const issues: TenderIssue[] = [];
   if (tenders.length > maxTenders) issues.push({ code: "TOO_MANY_TENDERS" });
 
   let running = 0n;
   const applied: AppliedTender[] = [];
+  let malformed = false;
   tenders.forEach((tender, index) => {
     if (typeof tender.amount !== "bigint" || tender.amount <= 0n) {
       issues.push({ code: "NON_POSITIVE_AMOUNT", index });
+      malformed = true;
       return;
     }
     const isCash = tender.method === "CASH";
@@ -92,6 +116,12 @@ export function validateTenders(
     let tendered: Money | null = null;
     if (isCash) {
       tendered = tender.tendered ?? tender.amount;
+      if (typeof tendered !== "bigint" || tendered <= 0n) {
+        issues.push({ code: "INVALID_TENDERED", index });
+        malformed = true;
+        return;
+      }
+      if (tendered - tender.amount > maxChange) issues.push({ code: "CHANGE_TOO_LARGE", index });
       if (tendered < tender.amount) issues.push({ code: "TENDERED_LESS_THAN_AMOUNT", index });
       if (tender.amount % cashUnit !== 0n || tendered % cashUnit !== 0n) {
         issues.push({ code: "CASH_NOT_IN_UNITS", index });
@@ -112,7 +142,7 @@ export function validateTenders(
     });
   });
 
-  if (running < payable) issues.push({ code: "UNDERPAID" });
+  if (!malformed && running < payable) issues.push({ code: "UNDERPAID" });
   if (issues.length > 0) return { ok: false, issues };
   return {
     ok: true,

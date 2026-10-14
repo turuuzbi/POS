@@ -5,6 +5,7 @@ import {
   CartError,
   cartReducer,
   computeTotals,
+  computeTotalsDetailed,
   reduceCart,
   requiredApprovals,
   type Cart,
@@ -391,5 +392,59 @@ describe("properties (seeded)", () => {
       expect(t.payable % unit).toBe(0n);
       expect(t.discountTotal).toBe(t.lines.reduce((a, l) => a + l.discount, 0n));
     }
+  });
+});
+
+describe("review regressions", () => {
+  it("ADD_ITEM does not merge into a line with override, discount or note", () => {
+    const over = run([
+      add("a", "milk"),
+      { type: "SET_PRICE_OVERRIDE", lineId: "a", price: 100n },
+      add("b", "milk"),
+    ]);
+    expect(over.lines).toHaveLength(2);
+    const disc = run([
+      add("a", "milk"),
+      { type: "ADD_LINE_DISCOUNT", lineId: "a", discount: { kind: "PERCENT", percentBps: 5000 } },
+      add("b", "milk"),
+    ]);
+    expect(disc.lines).toHaveLength(2);
+    const noted = run([
+      add("a", "milk"),
+      { type: "SET_NOTE", lineId: "a", note: "x" },
+      add("b", "milk"),
+    ]);
+    expect(noted.lines).toHaveLength(2);
+    expect(computeTotals(over, catalog).total).toBe(100n + T(3300));
+  });
+
+  it("fixed cart discount takes the same gross off exclusive and inclusive lines", () => {
+    const cart = run([
+      add("a", "excl", 10),
+      { type: "APPLY_CART_DISCOUNT", discount: { kind: "FIXED", amount: T(1000) } },
+    ]);
+    const before = computeTotals({ ...cart, discounts: [] }, catalog).total;
+    expect(before).toBe(T(11000));
+    expect(computeTotals(cart, catalog).total).toBe(T(10000));
+    const mixed = run([
+      add("a", "excl", 10),
+      add("b", "milk", 1),
+      { type: "APPLY_CART_DISCOUNT", discount: { kind: "FIXED", amount: T(1000) } },
+    ]);
+    const t = computeTotals(mixed, catalog);
+    const base = computeTotals({ ...mixed, discounts: [] }, catalog);
+    const drop = base.total - t.total;
+    expect(drop >= T(1000) - 1n && drop <= T(1000) + 1n).toBe(true);
+  });
+
+  it("computeTotalsDetailed exposes per-step discounts", () => {
+    const cart = run([
+      add("a", "milk"),
+      { type: "ADD_LINE_DISCOUNT", lineId: "a", discount: { kind: "PERCENT", percentBps: 1000 } },
+      { type: "APPLY_CART_DISCOUNT", discount: { kind: "FIXED", amount: T(100) } },
+    ]);
+    const d = computeTotalsDetailed(cart, catalog);
+    expect(d.lineSteps.get("a")).toHaveLength(1);
+    expect(d.cartSteps).toHaveLength(1);
   });
 });

@@ -24,7 +24,7 @@ import {
 import { MAX_MONEY } from "./catalog";
 import { MAX_QTY_MILLI } from "./qty";
 import type { ScaleBarcodeRule } from "./scale-barcode";
-import { MAX_TENDERS, TENDER_METHODS } from "./tender";
+import { MAX_TENDERS, TENDER_METHODS, type TenderIssue } from "./tender";
 
 // ---------------------------------------------------------------------------
 // Primitives
@@ -37,26 +37,48 @@ export const moneyWire = z
   .refine((v) => v <= MAX_MONEY, "too large");
 
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-export const uuidV7 = z.string().regex(UUID_V7, "invalid uuid v7");
+/** UUIDs are lowercased on parse so fingerprints do not depend on input case. */
+export const uuidV7 = z
+  .string()
+  .regex(UUID_V7, "invalid uuid v7")
+  .transform((v) => v.toLowerCase());
+const uuid = z.uuid().transform((v) => v.toLowerCase());
+
+const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+/**
+ * Optional trimmed text: no lone surrogates (TextEncoder would silently
+ * replace them, making different strings hash alike) and "" ≡ absent.
+ */
+const optionalText = (max: number) =>
+  z
+    .string()
+    .trim()
+    .max(max)
+    .refine((v) => !LONE_SURROGATE.test(v), "invalid text")
+    .optional()
+    .transform((v) => (v === "" ? undefined : v));
+
+/** Upper bound on approval entries: one per line price/discount + cart discounts. */
+export const MAX_APPROVALS = MAX_CART_LINES * (1 + MAX_LINE_DISCOUNTS) + MAX_CART_DISCOUNTS;
 
 export const discountRequestSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("PERCENT"),
     percentBps: z.number().int().min(1).max(10_000),
-    reason: z.string().trim().max(120).optional(),
+    reason: optionalText(120),
   }),
   z.object({
     kind: z.literal("FIXED"),
     amount: moneyWire.refine((v) => v > 0n, "must be positive"),
-    reason: z.string().trim().max(120).optional(),
+    reason: optionalText(120),
   }),
 ]);
 
 export const lineIntentSchema = z
   .object({
     /** Client-generated; echoed back; approval keys refer to it. */
-    lineId: z.uuid(),
-    variantId: z.uuid().optional(),
+    lineId: uuid,
+    variantId: uuid.optional(),
     /** Scale label (13 digits). Quantity/price come from the label. */
     scaleBarcode: z
       .string()
@@ -69,7 +91,7 @@ export const lineIntentSchema = z
     /** Requested price override (needs approval). */
     priceOverride: moneyWire.optional(),
     discounts: z.array(discountRequestSchema).max(MAX_LINE_DISCOUNTS).default([]),
-    note: z.string().trim().max(MAX_NOTE_LENGTH).optional(),
+    note: optionalText(MAX_NOTE_LENGTH),
   })
   .refine((l) => (l.variantId === undefined) !== (l.scaleBarcode === undefined), {
     message: "exactly one of variantId / scaleBarcode",
@@ -83,28 +105,118 @@ export const tenderIntentSchema = z.object({
   amount: moneyWire.refine((v) => v > 0n, "must be positive"),
   /** Cash only. */
   tendered: moneyWire.optional(),
-  reference: z.string().trim().max(100).optional(),
+  reference: optionalText(100),
   /** QPAY: a PaymentIntent the server must find PAID. */
-  paymentIntentId: z.uuid().optional(),
+  paymentIntentId: uuid.optional(),
   /** GIFT_CARD: code typed/scanned; the server resolves and row-locks it. */
-  giftCardCode: z.string().trim().max(64).optional(),
+  giftCardCode: optionalText(64),
+  /** CARD: terminal-reported brand and last four digits (receipt only). */
+  cardBrand: optionalText(20),
+  cardLast4: z
+    .string()
+    .regex(/^\d{4}$/)
+    .optional(),
 });
 
-export const checkoutInputSchema = z.object({
-  saleId: uuidV7,
-  lines: z.array(lineIntentSchema).min(1).max(MAX_CART_LINES),
-  cartDiscounts: z.array(discountRequestSchema).max(MAX_CART_DISCOUNTS).default([]),
-  /** Phase 4 fills this in. */
-  customerId: z.uuid().optional(),
-  tenders: z.array(tenderIntentSchema).max(MAX_TENDERS),
-  /** Payable the client showed; a mismatch with the server's total is TOTAL_MISMATCH. */
-  expectedPayable: moneyWire,
-  /** approval key (discounts.ts `approvalKeys`) → approval token. */
-  approvals: z.record(z.string().max(100), z.string().min(1).max(512)).default({}),
-  note: z.string().trim().max(500).optional(),
-  /** Device clock, ISO-8601 with offset. Informational (Sale.occurredAt). */
-  createdAtClient: z.iso.datetime({ offset: true }),
-});
+type TenderShape = z.output<typeof tenderIntentSchema>;
+
+/** Per-method required (R) / forbidden (F) fields. */
+const TENDER_FIELD_RULES: Record<
+  (typeof TENDER_METHODS)[number],
+  { required: (keyof TenderShape)[]; forbidden: (keyof TenderShape)[] }
+> = {
+  CASH: { required: [], forbidden: ["paymentIntentId", "giftCardCode", "cardBrand", "cardLast4"] },
+  CARD: { required: [], forbidden: ["tendered", "paymentIntentId", "giftCardCode"] },
+  BANK_TRANSFER: {
+    required: [],
+    forbidden: ["tendered", "paymentIntentId", "giftCardCode", "cardBrand", "cardLast4"],
+  },
+  QPAY: {
+    required: ["paymentIntentId"],
+    forbidden: ["tendered", "giftCardCode", "cardBrand", "cardLast4"],
+  },
+  GIFT_CARD: {
+    required: ["giftCardCode"],
+    forbidden: ["tendered", "paymentIntentId", "cardBrand", "cardLast4"],
+  },
+  STORE_CREDIT: {
+    required: [],
+    forbidden: ["tendered", "paymentIntentId", "giftCardCode", "cardBrand", "cardLast4"],
+  },
+};
+
+export const checkoutInputSchema = z
+  .object({
+    saleId: uuidV7,
+    lines: z.array(lineIntentSchema).min(1).max(MAX_CART_LINES),
+    cartDiscounts: z.array(discountRequestSchema).max(MAX_CART_DISCOUNTS).default([]),
+    /** Phase 4 fills this in. */
+    customerId: uuid.optional(),
+    tenders: z.array(tenderIntentSchema).max(MAX_TENDERS),
+    /** Payable the client showed; a mismatch with the server's total is TOTAL_MISMATCH. */
+    expectedPayable: moneyWire,
+    /** approval key (discounts.ts `approvalKeys`) → approval token. */
+    approvals: z
+      .record(z.string().max(100), z.string().min(1).max(512))
+      .refine((r) => Object.keys(r).length <= MAX_APPROVALS, "too many approvals")
+      .default({}),
+    note: optionalText(500),
+    buyerTaxId: optionalText(20),
+    /** Device clock, ISO-8601 with offset. Informational (Sale.occurredAt). */
+    createdAtClient: z.iso.datetime({ offset: true }),
+  })
+  .superRefine((input, ctx) => {
+    const seenLines = new Set<string>();
+    input.lines.forEach((line, i) => {
+      if (seenLines.has(line.lineId)) {
+        ctx.addIssue({ code: "custom", path: ["lines", i, "lineId"], message: "duplicate lineId" });
+      }
+      seenLines.add(line.lineId);
+    });
+    const seenIntents = new Set<string>();
+    const seenCodes = new Set<string>();
+    input.tenders.forEach((t, i) => {
+      const rule = TENDER_FIELD_RULES[t.method];
+      for (const field of rule.required) {
+        if (t[field] === undefined) {
+          ctx.addIssue({ code: "custom", path: ["tenders", i, field], message: "required" });
+        }
+      }
+      for (const field of rule.forbidden) {
+        if (t[field] !== undefined) {
+          ctx.addIssue({ code: "custom", path: ["tenders", i, field], message: "not allowed" });
+        }
+      }
+      if (t.method === "STORE_CREDIT" && input.customerId === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["customerId"],
+          message: "required for store credit",
+        });
+      }
+      if (t.paymentIntentId !== undefined) {
+        if (seenIntents.has(t.paymentIntentId)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["tenders", i, "paymentIntentId"],
+            message: "duplicate",
+          });
+        }
+        seenIntents.add(t.paymentIntentId);
+      }
+      if (t.giftCardCode !== undefined) {
+        const code = t.giftCardCode.toUpperCase();
+        if (seenCodes.has(code)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["tenders", i, "giftCardCode"],
+            message: "duplicate",
+          });
+        }
+        seenCodes.add(code);
+      }
+    });
+  });
 
 export type LineIntent = z.output<typeof lineIntentSchema>;
 export type TenderIntent = z.output<typeof tenderIntentSchema>;
@@ -136,6 +248,19 @@ export const CHECKOUT_ERROR_CODES = [
   "INSUFFICIENT_STOCK",
   "CUSTOMER_NOT_FOUND",
   "IDEMPOTENCY_CONFLICT",
+  "DUPLICATE_LINE_ID",
+  "DUPLICATE_TENDER_REFERENCE",
+  "INVALID_PRICE",
+  "TENDER_OVERPAID",
+  "TENDER_UNDERPAID",
+  "TENDER_CASH_NOT_IN_UNITS",
+  "CHANGE_TOO_LARGE",
+  "GIFT_CARD_NOT_FOUND",
+  "GIFT_CARD_INACTIVE",
+  "STORE_CREDIT_INSUFFICIENT",
+  "SALE_OWNERSHIP_MISMATCH",
+  "CONCURRENT_DUPLICATE",
+  "INTERNAL",
 ] as const;
 export type CheckoutErrorCode = (typeof CHECKOUT_ERROR_CODES)[number];
 
@@ -162,6 +287,24 @@ export function checkoutError(
   };
 }
 
+/** Map the first tender-validation issue to its checkout code (all issues in details). */
+export function checkoutErrorFromTender(issues: readonly TenderIssue[]): CheckoutError {
+  const map: Partial<Record<TenderIssue["code"], CheckoutErrorCode>> = {
+    OVERPAID: "TENDER_OVERPAID",
+    NON_CASH_EXCEEDS_BALANCE: "TENDER_OVERPAID",
+    UNDERPAID: "TENDER_UNDERPAID",
+    CASH_NOT_IN_UNITS: "TENDER_CASH_NOT_IN_UNITS",
+    CHANGE_TOO_LARGE: "CHANGE_TOO_LARGE",
+  };
+  const first = issues[0];
+  return checkoutError((first && map[first.code]) ?? "TENDER_MISMATCH", {
+    issues: issues.map((i) => ({
+      code: i.code,
+      ...(i.index !== undefined ? { index: i.index } : {}),
+    })),
+  });
+}
+
 /** Map a cart-level error to its checkout code. */
 export function checkoutErrorFromCart(error: CartError): CheckoutError {
   const map: Partial<Record<CartError["code"], CheckoutErrorCode>> = {
@@ -169,6 +312,8 @@ export function checkoutErrorFromCart(error: CartError): CheckoutError {
     INVALID_QUANTITY: "INVALID_QUANTITY",
     INVALID_SCALE_BARCODE: "INVALID_SCALE_BARCODE",
     INVALID_DISCOUNT: "INVALID_DISCOUNT",
+    INVALID_PRICE: "INVALID_PRICE",
+    DUPLICATE_LINE_ID: "DUPLICATE_LINE_ID",
   };
   return checkoutError(map[error.code] ?? "INVALID_INPUT", { cart: error.code });
 }

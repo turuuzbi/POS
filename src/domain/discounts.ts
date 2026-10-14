@@ -12,7 +12,9 @@
  *      remaining after the previous one (10% then 5% = 14.5%, not 15%);
  *   2. then the cart discounts, in array order, each resolved against the
  *      pool left across all lines and allocated pro-rata to the lines'
- *      remaining amounts by largest remainder (exact sum);
+ *      remaining amounts by largest remainder (exact sum). The pool is in
+ *      GROSS: callers pass tax-exclusive lines as their gross (cart.ts) and
+ *      convert each share back to the line's mode;
  *   3. tax per line on the remainder.
  * A discount can never take more than what remains, so lines never go
  * negative.

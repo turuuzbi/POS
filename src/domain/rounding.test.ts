@@ -42,3 +42,11 @@ describe("roundTotal", () => {
     }
   });
 });
+
+describe("zero payable guard", () => {
+  it("never makes a positive total free", () => {
+    expect(roundTotal(249n, 500n)).toEqual({ total: 249n, roundingAmount: 251n, payable: 500n });
+    expect(roundTotal(499n, 1000n).payable).toBe(1000n);
+    expect(roundTotal(0n, 500n).payable).toBe(0n);
+  });
+});

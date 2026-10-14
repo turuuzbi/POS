@@ -7,6 +7,7 @@ import {
   quickCashAmounts,
   remainingBalance,
   validateTenders,
+  cashUnitForRounding,
   type Tender,
 } from "./tender";
 
@@ -165,5 +166,38 @@ describe("helpers", () => {
       T(40_000),
     ]);
     expect(quickCashAmounts(0n)).toEqual([]);
+  });
+});
+
+describe("review regressions", () => {
+  it("caps change on a cash tender", () => {
+    const r = validateTenders(10_000_00n, [
+      { method: "CASH", amount: 10_000_00n, tendered: 900_000_000_000_000n },
+    ]);
+    expect(r).toMatchObject({ ok: false });
+    expect(!r.ok && r.issues.some((i) => i.code === "CHANGE_TOO_LARGE")).toBe(true);
+  });
+
+  it("does not report UNDERPAID when another tender is malformed", () => {
+    const r = validateTenders(1000_00n, [
+      { method: "CARD", amount: 0n },
+      { method: "CASH", amount: 1000_00n },
+    ]);
+    expect(!r.ok && r.issues.map((i) => i.code)).toEqual(["NON_POSITIVE_AMOUNT"]);
+  });
+
+  it("flags a non-bigint tendered", () => {
+    const r = validateTenders(1000_00n, [
+      { method: "CASH", amount: 1000_00n, tendered: 5 as unknown as bigint },
+    ]);
+    expect(!r.ok && r.issues[0]?.code).toBe("INVALID_TENDERED");
+  });
+
+  it("cashUnitForRounding follows sub-tögrög rounding", () => {
+    expect(cashUnitForRounding(1n)).toBe(1n);
+    expect(cashUnitForRounding(500n)).toBe(100n);
+    expect(validateTenders(10050n, [{ method: "CASH", amount: 10050n }], { cashUnit: 1n }).ok).toBe(
+      true,
+    );
   });
 });

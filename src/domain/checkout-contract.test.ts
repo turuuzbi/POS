@@ -5,6 +5,7 @@ import {
   CHECKOUT_ERROR_CODES,
   CHECKOUT_ERROR_MESSAGE_KEYS,
   cartFromCheckoutInput,
+  checkoutErrorFromTender,
   checkoutFingerprint,
   checkoutInputSchema,
   checkoutResultSchema,
@@ -281,5 +282,87 @@ describe("result", () => {
     };
     const json = JSON.stringify(toWire(result));
     expect(checkoutResultSchema.parse(JSON.parse(json))).toEqual(result);
+  });
+});
+
+describe("review regressions", () => {
+  const issues = (over: Record<string, unknown>) => {
+    const r = checkoutInputSchema.safeParse({ ...wire(), ...over });
+    return r.success ? [] : r.error.issues.map((i) => i.path.join("."));
+  };
+
+  it("uppercase UUIDs fingerprint like lowercase", () => {
+    const upper = parse({
+      saleId: SALE.toUpperCase(),
+      lines: [
+        {
+          lineId: L1.toUpperCase(),
+          variantId: V1.toUpperCase(),
+          qtyMilli: 2000,
+          listedUnitPrice: "330000",
+        },
+        {
+          lineId: L2,
+          variantId: V2,
+          qtyMilli: 500,
+          discounts: [{ kind: "PERCENT", percentBps: 500 }],
+        },
+      ],
+    });
+    expect(checkoutFingerprint(upper)).toBe(checkoutFingerprint(parse()));
+  });
+
+  it("empty optional strings equal absent ones", () => {
+    expect(checkoutFingerprint(parse({ note: "" }))).toBe(checkoutFingerprint(parse()));
+    expect(checkoutFingerprint(parse({ note: "   " }))).toBe(checkoutFingerprint(parse()));
+  });
+
+  it("rejects lone surrogates", () => {
+    expect(issues({ note: "a\ud800" })).toContain("note");
+    expect(issues({ note: "ok \ud83d\ude00" })).toEqual([]);
+  });
+
+  it("rejects duplicate lineIds", () => {
+    const line = { lineId: L1, variantId: V1, qtyMilli: 1000 };
+    expect(issues({ lines: [line, line] })).toContain("lines.1.lineId");
+  });
+
+  it("caps the approvals record", () => {
+    const approvals = Object.fromEntries(Array.from({ length: 5000 }, (_, i) => [`k${i}`, "t"]));
+    expect(issues({ approvals })).toContain("approvals");
+  });
+
+  it("cross-validates tenders by method", () => {
+    const PI = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4c01";
+    const t = (o: Record<string, unknown>) => ({ method: "CASH", amount: "100", ...o });
+    expect(issues({ tenders: [t({ method: "QPAY" })] })).toContain("tenders.0.paymentIntentId");
+    expect(issues({ tenders: [t({ method: "GIFT_CARD" })] })).toContain("tenders.0.giftCardCode");
+    expect(issues({ tenders: [t({ method: "CARD", giftCardCode: "G1" })] })).toContain(
+      "tenders.0.giftCardCode",
+    );
+    expect(issues({ tenders: [t({ method: "STORE_CREDIT" })] })).toContain("customerId");
+    expect(
+      issues({
+        tenders: [
+          t({ method: "GIFT_CARD", giftCardCode: "ab" }),
+          t({ method: "GIFT_CARD", giftCardCode: "AB" }),
+        ],
+      }),
+    ).toContain("tenders.1.giftCardCode");
+    expect(
+      issues({
+        tenders: [
+          t({ method: "QPAY", paymentIntentId: PI }),
+          t({ method: "QPAY", paymentIntentId: PI.toUpperCase() }),
+        ],
+      }),
+    ).toContain("tenders.1.paymentIntentId");
+    expect(issues({ tenders: [t({ method: "QPAY", paymentIntentId: PI })] })).toEqual([]);
+  });
+
+  it("maps tender issues to specific codes", () => {
+    expect(checkoutErrorFromTender([{ code: "UNDERPAID" }]).code).toBe("TENDER_UNDERPAID");
+    expect(checkoutErrorFromTender([{ code: "OVERPAID", index: 0 }]).code).toBe("TENDER_OVERPAID");
+    expect(checkoutErrorFromTender([{ code: "TOO_MANY_TENDERS" }]).code).toBe("TENDER_MISMATCH");
   });
 });

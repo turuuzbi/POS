@@ -30,6 +30,8 @@ export function roundTotal(
 ): RoundedTotal {
   if (total < 0n) throw new RangeError("roundTotal: total must not be negative");
   if (unit <= 0n) throw new RangeError("roundTotal: unit must be positive");
-  const payable = roundToUnit(total, unit, mode);
+  let payable = roundToUnit(total, unit, mode);
+  // A non-empty sale is never free: rounding down to 0 bumps to one unit.
+  if (total > 0n && payable === 0n) payable = unit;
   return { total, roundingAmount: payable - total, payable };
 }

@@ -28,7 +28,7 @@ import { MAX_QTY_MILLI, extend, isFractionalUnit, isValidQty, type Unit } from "
 import { DEFAULT_ROUNDING_UNIT, roundTotal } from "./rounding";
 import { DEFAULT_SCALE_RULES, normalizePlu, parseScaleBarcode } from "./scale-barcode";
 import type { ScaleBarcodeRule } from "./scale-barcode";
-import { computeLineTax, type TaxTreatment } from "./tax";
+import { computeLineTax, type TaxRule, type TaxTreatment } from "./tax";
 
 export const MAX_CART_LINES = 200;
 export const MAX_LINE_DISCOUNTS = 5;
@@ -40,6 +40,12 @@ export interface CatalogVariant {
   variantId: string;
   productId?: string;
   name?: string;
+  /** Snapshot columns for SaleLine (filled by the server from the catalog). */
+  sku?: string;
+  categoryId?: string | null;
+  productType?: string;
+  /** Unit cost in möngö (COGS snapshot), when known. */
+  unitCost?: Money | null;
   unit: Unit;
   /** Listed unit price (per unit of `unit`), in the product's tax mode. */
   price: Money;
@@ -191,6 +197,9 @@ function applyAction(cart: Cart, action: CartAction, catalog: CatalogSnapshot): 
             !l.voided &&
             l.variantId === variant.variantId &&
             l.labelTotal === undefined &&
+            l.priceOverride === undefined &&
+            l.discounts.length === 0 &&
+            !l.note &&
             l.unitPrice === variant.price,
         );
         if (existing) {
@@ -347,6 +356,32 @@ function lineBase(line: CartLine): { unitPrice: Money; base: Money } {
   return { unitPrice, base: extend(unitPrice, line.qtyMilli) };
 }
 
+/**
+ * Convert a cart-discount share expressed in gross into the line's pricing
+ * mode. Inclusive lines: unchanged. Exclusive lines: the net reduction whose
+ * resulting gross is closest to `gross(remaining) - share`.
+ */
+function grossShareToLineMode(remaining: Money, share: Money, rule: TaxRule): Money {
+  if (rule.pricesIncludeTax || share === 0n) return share;
+  const full = computeLineTax(remaining, rule).gross;
+  if (share >= full) return remaining;
+  const target = full - share;
+  const estimate = (remaining * target) / full;
+  let best = estimate;
+  let bestDiff = -1n;
+  for (let d = -3n; d <= 3n; d++) {
+    const net = estimate + d;
+    if (net < 0n || net > remaining) continue;
+    const diff = computeLineTax(net, rule).gross - target;
+    const abs = diff < 0n ? -diff : diff;
+    if (bestDiff < 0n || abs < bestDiff) {
+      best = net;
+      bestDiff = abs;
+    }
+  }
+  return remaining - best;
+}
+
 function evaluate(cart: Cart, catalog: CatalogSnapshot, settings: CartSettings): Evaluated {
   const active = cart.lines.filter((l) => !l.voided);
   const bases = new Map<string, { unitPrice: Money; base: Money }>();
@@ -369,11 +404,33 @@ function evaluate(cart: Cart, catalog: CatalogSnapshot, settings: CartSettings):
     stepsByLine.set(line.lineId, applied.steps);
   }
 
+  // Cart discounts are resolved and allocated on a single GROSS basis so that
+  // tax-inclusive and tax-exclusive lines mix correctly: an exclusive line
+  // contributes the gross of what is left after its own discounts, and its
+  // share is converted back to its net basis afterwards.
+  const taxRuleOf = (line: CartLine): TaxRule => {
+    const v = variantOf(catalog, line.variantId);
+    return {
+      treatment: v.taxTreatment,
+      vatRateBps: v.vatRateBps,
+      cityTaxRateBps: v.cityTaxRateBps,
+      pricesIncludeTax: v.pricesIncludeTax,
+    };
+  };
   const cartResult = applyCartDiscounts(
-    active.map((l) => afterLine.get(l.lineId)!.remaining),
+    active.map((l) => {
+      const remaining = afterLine.get(l.lineId)!.remaining;
+      return computeLineTax(remaining, taxRuleOf(l)).gross;
+    }),
     cart.discounts,
   );
-  const cartShare = new Map(active.map((l, i) => [l.lineId, cartResult.perLine[i] ?? 0n]));
+  const cartShare = new Map(
+    active.map((l, i) => {
+      const remaining = afterLine.get(l.lineId)!.remaining;
+      const gross = cartResult.perLine[i] ?? 0n;
+      return [l.lineId, grossShareToLineMode(remaining, gross, taxRuleOf(l))] as const;
+    }),
+  );
 
   const lines: LineTotals[] = cart.lines.map((line) => {
     if (line.voided) {
@@ -455,6 +512,27 @@ export function computeTotals(
   settings: CartSettings = {},
 ): SaleTotals {
   return evaluate(cart, catalog, settings).totals;
+}
+
+/**
+ * Totals plus the per-step discount breakdown (what SaleDiscount rows need):
+ * `lineSteps` by lineId in array order, `cartSteps` in array order. Cart step
+ * bases/amounts are in GROSS (see `evaluate`).
+ */
+export function computeTotalsDetailed(
+  cart: Cart,
+  catalog: CatalogSnapshot,
+  settings: CartSettings = {},
+): {
+  totals: SaleTotals;
+  lineSteps: ReadonlyMap<
+    string,
+    Evaluated["lineStepBases"] extends Map<string, infer S> ? S : never
+  >;
+  cartSteps: Evaluated["cartSteps"];
+} {
+  const e = evaluate(cart, catalog, settings);
+  return { totals: e.totals, lineSteps: e.lineStepBases, cartSteps: e.cartSteps };
 }
 
 /**
