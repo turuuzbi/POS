@@ -2,7 +2,272 @@
   "title": "Register",
   "cashier": "Cashier: {name}",
   "unassigned": "No register assigned",
-  "checkoutComingTitle": "Checkout is coming next",
-  "checkoutComingDescription": "Product search, scanning and payments arrive in the next release.",
-  "backOffice": "Back office"
+  "backOffice": "Back office",
+  "noRegister": {
+    "title": "This device is not linked to a register",
+    "description": "A manager must pair this device to a location and register under Devices."
+  },
+  "offline": {
+    "badge": "Offline",
+    "banner": "The connection is down. Sales cannot be taken until it returns (offline mode is coming). Your cart is saved."
+  },
+  "pending": {
+    "banner": "A payment is not confirmed yet. Checking again never charges twice.",
+    "retry": "Check again",
+    "locked": "The cart cannot be changed until the payment is confirmed.",
+    "pricesUpdated": "Prices were updated. Review the cart and take payment again.",
+    "approvalExpired": "The approval expired. Ask a manager to enter their PIN again.",
+    "shiftClosed": "The shift is not open. Open a shift first."
+  },
+  "announce": {
+    "added": "{name} added"
+  },
+  "search": {
+    "label": "Find a product",
+    "placeholder": "Name, barcode or SKU (/)",
+    "results": "Search results",
+    "noResults": "No matching products.",
+    "onHand": "On hand: {qty}",
+    "notFound": "Product not found",
+    "resultCount": "{count, plural, one {# result} other {# results}}",
+    "camera": "Scan with camera",
+    "lookupFailed": "Could not look up the product. Check the connection.",
+    "codeNotFound": "No product with code “{code}”."
+  },
+  "grid": {
+    "variants": "{count, plural, one {# variant} other {# variants}}",
+    "favourites": "Favourites",
+    "all": "All products",
+    "tabs": "Categories",
+    "loading": "Loading products",
+    "loadFailed": "Could not load products.",
+    "retry": "Try again",
+    "empty": "No products in this category."
+  },
+  "keypad": {
+    "decimal": "Decimal point",
+    "backspace": "Delete last character"
+  },
+  "qty": {
+    "description": "Enter the quantity.",
+    "labelWeighed": "Quantity ({unit})",
+    "labelPieces": "Pieces",
+    "invalidWeighed": "Enter a quantity above 0 with up to 3 decimals.",
+    "invalidPieces": "Enter a whole number of pieces.",
+    "cancel": "Cancel",
+    "apply": "Save"
+  },
+  "price": {
+    "description": "Listed price: {price}. Changing the price needs manager approval.",
+    "label": "New unit price",
+    "approvalHint": "Every price change is confirmed by a manager PIN.",
+    "reset": "Listed price",
+    "cancel": "Cancel",
+    "apply": "Change price"
+  },
+  "discount": {
+    "description": "Give a discount as a percentage or an amount.",
+    "cartTitle": "Cart discount",
+    "kind": "Discount type",
+    "percent": "Percent (%)",
+    "fixed": "Amount (₮)",
+    "percentLabel": "Discount percentage",
+    "fixedLabel": "Discount amount",
+    "invalidPercent": "Enter a percentage between 0.01 and 100.",
+    "invalidFixed": "The amount must be above 0 and no more than what is being discounted.",
+    "reason": "Reason (optional)",
+    "needsApproval": "Discounts above {percent}% need manager approval.",
+    "clear": "Remove discounts",
+    "cancel": "Cancel",
+    "apply": "Apply discount"
+  },
+  "note": {
+    "label": "Line note",
+    "cancel": "Cancel",
+    "save": "Save"
+  },
+  "approval": {
+    "title": "Manager approval",
+    "description": "A manager enters their own PIN on this device.",
+    "pendingList": "Actions waiting for approval",
+    "pinLabel": "Manager PIN",
+    "invalidPin": "Wrong PIN, or this person may not approve this.",
+    "cancel": "Cancel",
+    "approve": "Approve",
+    "checking": "Checking…",
+    "price": "Price change: {name}",
+    "cartDiscount": "Cart discount",
+    "lineDiscount": "Discount: {name}"
+  },
+  "cart": {
+    "title": "Cart",
+    "backToItems": "Back to products",
+    "itemCount": "{count, plural, one {# item} other {# items}}",
+    "held": "On hold ({count})",
+    "voided": "Voided",
+    "priceChanged": "Price changed",
+    "needsApproval": "Needs approval",
+    "removeLine": "Remove line",
+    "decrease": "{name}: remove one",
+    "increase": "{name}: add one",
+    "editQty": "{name}: quantity {qty}, edit",
+    "lineActions": "{name}: actions",
+    "changePrice": "Change price",
+    "discount": "Discount",
+    "note": "Note",
+    "void": "Void line",
+    "remove": "{name}: remove",
+    "emptyTitle": "The cart is empty",
+    "emptyHint": "Tap a product, search or scan a barcode.",
+    "lines": "Cart lines",
+    "cartDiscounts": "Cart discounts",
+    "cartDiscountBadge": "Cart −{value}",
+    "subtotal": "Subtotal",
+    "discounts": "Discounts",
+    "vat": "VAT",
+    "cityTax": "City tax",
+    "rounding": "Rounding",
+    "payable": "To pay",
+    "pendingApprovals": "Waiting for manager approval ({count})",
+    "approve": "Get approval",
+    "offlineCharge": "Offline: payment cannot be taken.",
+    "hold": "Hold",
+    "cartDiscount": "Discount",
+    "clear": "Clear",
+    "charge": "Charge",
+    "open": "Open cart: {count, plural, one {# item} other {# items}}"
+  },
+  "tender": {
+    "title": "Take payment",
+    "description": "Choose how the customer pays. A sale can be split across methods.",
+    "payable": "To pay",
+    "remaining": "Remaining",
+    "applied": "Payments taken",
+    "method": {
+      "CASH": "Cash",
+      "CARD": "Card",
+      "BANK_TRANSFER": "Bank transfer",
+      "QPAY": "QPay"
+    },
+    "methodLabel": "Payment method",
+    "given": "given {amount}",
+    "removeTender": "Remove payment",
+    "quickAmounts": "Quick amounts",
+    "cashGiven": "Cash given by the customer",
+    "changeDue": "Change due",
+    "addCash": "Take cash",
+    "addPartial": "Take part in cash",
+    "amount": "Amount",
+    "referenceRequired": "Transfer reference",
+    "referenceOptional": "Reference (optional)",
+    "addPayment": "Add payment",
+    "complete": "Complete sale",
+    "sending": "Sending…",
+    "unknownTitle": "Payment not confirmed",
+    "unknownBody": "The server could not be reached. The sale may already be recorded. Checking again never charges twice.",
+    "retry": "Check again",
+    "back": "Back",
+    "errors": {
+      "cashUnits": "Cash amounts must be a multiple of the smallest coin.",
+      "amount": "Enter the payment amount.",
+      "exceeds": "The amount is more than the remaining {remaining}.",
+      "reference": "A transfer reference is required for bank transfers.",
+      "generic": "The sale could not be recorded ({code}).",
+      "unknown": "No answer received. Please check again.",
+      "tenders": "The payments do not add up to the amount due."
+    }
+  },
+  "qpay": {
+    "scan": "Scan the QR code with QPay or a bank app to pay {amount}.",
+    "qrAlt": "QPay payment QR code",
+    "bankApps": "Bank app links",
+    "waiting": "Waiting for payment…",
+    "cancel": "Cancel",
+    "ended": {
+      "EXPIRED": "The invoice expired.",
+      "FAILED": "The payment failed.",
+      "CANCELLED": "The payment was cancelled."
+    },
+    "createFailed": "Could not create the QPay invoice. Please try again.",
+    "creating": "Creating…",
+    "create": "Create QR · {amount}"
+  },
+  "success": {
+    "title": "Sale completed",
+    "receiptNumber": "Receipt no. {number}",
+    "paid": "Amount paid",
+    "changeDue": "Change to give",
+    "needsReview": "A manager needs to review this sale.",
+    "email": "Email (optional)",
+    "phone": "Phone (optional)",
+    "receipt": "Receipt",
+    "newSale": "New sale"
+  },
+  "held": {
+    "title": "Held carts",
+    "description": "Your parked sales on this register.",
+    "empty": "No held carts.",
+    "justNow": "just now",
+    "minutesAgo": "{count} min ago",
+    "hoursAgo": "{count} h ago",
+    "daysAgo": "{count} d ago",
+    "items": "{count, plural, one {# item} other {# items}}",
+    "resume": "Resume",
+    "discard": "Discard",
+    "confirmDiscard": "Yes, discard",
+    "close": "Close",
+    "parked": "Cart put on hold.",
+    "full": "Too many held carts. Discard one first.",
+    "pricesChanged": "Prices changed while the cart was on hold and were updated."
+  },
+  "variant": {
+    "description": "Choose a variant."
+  },
+  "camera": {
+    "title": "Scan with camera",
+    "description": "Hold the barcode in front of the camera. Scanned products are added to the cart.",
+    "preview": "Camera preview",
+    "starting": "Starting the camera",
+    "unsupported": "This browser cannot use the camera (or the page is not on a secure connection). Use a barcode scanner or search instead.",
+    "denied": "Camera access was denied. Allow it in the browser settings.",
+    "noCamera": "No camera found.",
+    "error": "The camera could not be started.",
+    "added": "Added: {code}",
+    "notFound": "Not found: {code}",
+    "torchOn": "Light on",
+    "torchOff": "Light off",
+    "done": "Done"
+  },
+  "help": {
+    "button": "Shortcuts",
+    "title": "Keyboard shortcuts",
+    "keys": {
+      "search": "Go to search",
+      "charge": "Charge",
+      "hold": "Hold cart",
+      "held": "Held carts",
+      "camera": "Scan with camera",
+      "discount": "Cart discount",
+      "help": "This help",
+      "close": "Close a dialog"
+    },
+    "scanner": "A USB barcode scanner works anywhere on the screen: a scan adds the product straight away.",
+    "quantity": "Type “3*barcode” in search to add 3 pieces."
+  },
+  "shift": {
+    "title": "Open shift",
+    "description": "{register}: count the cash in the drawer before the first sale.",
+    "openingFloat": "Opening cash float",
+    "open": "Open shift",
+    "opening": "Opening…"
+  },
+  "clearConfirm": {
+    "title": "Clear the cart?",
+    "description": "All items will be removed from the cart.",
+    "cancel": "Cancel",
+    "confirm": "Clear"
+  },
+  "errorBoundary": {
+    "cartSaved": "Your cart is saved. Retrying will pick up where you left off."
+  }
 }
