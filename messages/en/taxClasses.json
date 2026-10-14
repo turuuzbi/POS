@@ -1,4 +1,27 @@
 {
   "title": "Tax classes",
-  "description": "VAT and city tax rates."
+  "description": "VAT and city tax rates.",
+  "new": "New tax class",
+  "createTitle": "New tax class",
+  "editTitle": "Edit tax class",
+  "name": "Name",
+  "treatment": "Tax treatment",
+  "treatments": {
+    "STANDARD": "VAT applies",
+    "ZERO_RATED": "Zero-rated",
+    "EXEMPT": "VAT exempt"
+  },
+  "vatRate": "VAT (%)",
+  "cityTaxRate": "City tax (%)",
+  "percentHint": "For example 10 or 2.5",
+  "noVatNote": "No VAT is charged for this treatment.",
+  "products": "Products",
+  "productCount": "{count, plural, =0 {No products} one {# product} other {# products}}",
+  "defaultBadge": "Default",
+  "empty": "No tax classes yet.",
+  "emptyDescription": "Create your first tax class so product taxes can be calculated.",
+  "archiveConfirm": "Archive “{name}”? It can no longer be chosen for new products.",
+  "archived": "Tax class archived.",
+  "restored": "Tax class restored.",
+  "listHeading": "Tax class list"
 }

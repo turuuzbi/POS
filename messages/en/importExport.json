@@ -1,4 +1,100 @@
 {
   "title": "Import and export",
-  "description": "Bring products in and out as CSV files."
+  "description": "Bring products in and out as CSV files.",
+  "export": {
+    "heading": "Export",
+    "description": "Download all products, variants and barcodes as a CSV file. Opens correctly in Excel, including Mongolian text.",
+    "button": "Download CSV",
+    "costsNote": "The cost column is only included for users who may see costs."
+  },
+  "template": {
+    "heading": "Template",
+    "description": "An example file with the right columns. Do not rename the columns.",
+    "button": "Download template"
+  },
+  "import": {
+    "heading": "Import",
+    "description": "Pick a CSV file and check it first. If it is valid it is saved in one go; if not, nothing changes.",
+    "file": "CSV file",
+    "fileHint": "UTF-8, up to 2 MB and 5000 rows.",
+    "preview": "Check file",
+    "previewing": "Checking…",
+    "commit": "Import",
+    "committing": "Saving…",
+    "reset": "Cancel",
+    "another": "Choose another file"
+  },
+  "help": {
+    "heading": "File rules",
+    "matching": "A row updates the existing variant with the same SKU or barcode; otherwise it adds a new one.",
+    "blank": "When updating, blank cells keep the current value. For new products blank cells take defaults.",
+    "grouping": "Variants of one product are grouped by product_key (or by identical name). One row is one variant.",
+    "options": "Options (colour, size…) need a name in option1_name… and values in option1….",
+    "barcodes": "Separate several barcodes of one variant with “;”.",
+    "cost": "Cost only applies to new variants.",
+    "category": "Write a category as “Parent > Child” to be exact."
+  },
+  "summary": {
+    "heading": "Summary",
+    "rows": "Rows",
+    "create": "New products",
+    "update": "Products to update",
+    "newVariants": "New variants",
+    "updatedVariants": "Variants to update"
+  },
+  "preview": {
+    "heading": "Changes",
+    "product": "Product",
+    "action": "Action",
+    "variants": "Variants",
+    "line": "Line",
+    "more": "{count} more products.",
+    "create": "Create",
+    "update": "Update"
+  },
+  "issues": {
+    "heading": "Problems",
+    "summary": "{count, plural, one {# problem found} other {# problems found}}. Fix them and check again.",
+    "line": "Line {line}",
+    "fileLevel": "File",
+    "column": "Column",
+    "more": "{count} more problems.",
+    "none": "No problems."
+  },
+  "ready": "The file is valid and ready to import.",
+  "committed": "Import finished.",
+  "notCommitted": "Nothing was saved because of the problems.",
+  "tooLargeClient": "The file is larger than 2 MB.",
+  "readFailed": "The file could not be read.",
+  "codes": {
+    "required": "Required.",
+    "tooLong": "Too long.",
+    "invalid": "Invalid value.",
+    "invalidMoney": "Invalid amount (for example 12500 or 12500.50).",
+    "invalidQty": "Invalid quantity.",
+    "invalidBarcode": "Invalid barcode.",
+    "invalidPlu": "PLU must be up to 7 digits.",
+    "duplicate": "This code already belongs to another product.",
+    "cycle": "The category would contain itself.",
+    "inactive": "This record is archived.",
+    "empty": "The file is empty or has no data rows.",
+    "tooLarge": "The file is larger than 2 MB.",
+    "tooManyRows": "More than 5000 rows.",
+    "unterminatedQuote": "A quote is never closed.",
+    "badQuote": "Unexpected text after a closing quote.",
+    "badEncoding": "Save the file as UTF-8.",
+    "unknownColumn": "Unknown column name.",
+    "duplicateColumn": "Column name appears twice.",
+    "missingColumn": "A required column is missing.",
+    "columnCount": "The row has a different number of values than the header.",
+    "invalidBool": "Use true or false.",
+    "invalidEnum": "Not an allowed value.",
+    "duplicateInFile": "This code appears more than once in the file.",
+    "productConflict": "Rows of one product disagree.",
+    "unknownCategory": "No such category.",
+    "ambiguousCategory": "Several categories have this name. Use the full path (Parent > Child).",
+    "unknownTaxClass": "No such tax class.",
+    "ambiguousMatch": "The row matches several different products.",
+    "costNotAllowed": "You may not import costs."
+  }
 }
