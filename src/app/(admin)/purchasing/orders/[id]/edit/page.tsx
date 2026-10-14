@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { PageHeader } from "@/components/app/page-header";
-import { costText, qtyText } from "@/components/purchasing/lines-editor";
+import { costText, qtyText } from "@/components/purchasing/line-text";
 import { isEditable } from "@/domain/purchasing";
 import { requirePermission } from "@/server/auth/session";
 import { listUserLocations } from "@/server/queries/locations";
