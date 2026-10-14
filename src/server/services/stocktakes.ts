@@ -7,14 +7,16 @@ import { ActionError } from "../errors";
 import type { RequestMeta } from "../request";
 import { searchVariants } from "../queries/catalog";
 import { nextDocumentNumber } from "./sequence";
-import { postStockMovements } from "./stock";
+import { postStockMovements, type StockLine } from "./stock";
 
 /**
  * Stocktakes. A count starts by snapshotting the expected on-hand of every
  * in-scope item into a StocktakeLine (countedMilli = null until counted).
- * Finalizing posts the counted lines through postStockMovements, which
- * computes each variance under the stock-level lock against the CURRENT
- * balance, so sales/receipts that happened during the count are respected.
+ * Counting a line records the on-hand at that moment (expectedMilli, taken
+ * under the stock-level lock and refreshed on every recount). Finalizing
+ * posts the variance counted - expected as a DELTA, so sales/receipts that
+ * happened after an item was counted are preserved. Uncounted lines under
+ * "count all" are an absolute set to zero against the live balance.
  * The Stocktake row is the serialisation point: line writes take it FOR
  * SHARE, finalize/cancel take it FOR UPDATE, so a finalize can't miss an
  * in-flight scan and can't run twice.
@@ -152,6 +154,18 @@ export async function countLine(tx: Tx, input: CountLineInput): Promise<CountedL
     if (!valid) throw new ActionError("VALIDATION", "invalid quantity", { qty: ["invalid"] });
   }
 
+  if (input.mode !== "clear") {
+    // Serialise with sales/receipts so expectedMilli is the on-hand at this instant.
+    await tx.$executeRaw`
+      INSERT INTO "StockLevel" ("variantId", "locationId", "onHandMilli", "updatedAt")
+      VALUES (${input.variantId}::uuid, ${stocktake.locationId}::uuid, 0, now())
+      ON CONFLICT ("variantId", "locationId") DO NOTHING`;
+    await tx.$queryRaw`
+      SELECT 1 FROM "StockLevel"
+      WHERE "variantId" = ${input.variantId}::uuid AND "locationId" = ${stocktake.locationId}::uuid
+      FOR UPDATE`;
+  }
+
   const id = uuidv7();
   const base = {
     stocktakeId: input.stocktakeId,
@@ -172,7 +186,8 @@ export async function countLine(tx: Tx, input: CountLineInput): Promise<CountedL
           WHERE "variantId" = ${base.variantId}::uuid AND "locationId" = ${base.locationId}::uuid),
         now())
       ON CONFLICT ("stocktakeId", "variantId")
-      DO UPDATE SET "countedMilli" = EXCLUDED."countedMilli", "updatedAt" = now()
+      DO UPDATE SET "countedMilli" = EXCLUDED."countedMilli",
+                    "expectedMilli" = EXCLUDED."expectedMilli", "updatedAt" = now()
       RETURNING "variantId", "countedMilli", "expectedMilli"`;
   } else {
     rows = await tx.$queryRaw<CountedLine[]>`
@@ -183,7 +198,7 @@ export async function countLine(tx: Tx, input: CountLineInput): Promise<CountedL
         now())
       ON CONFLICT ("stocktakeId", "variantId")
       DO UPDATE SET "countedMilli" = COALESCE("StocktakeLine"."countedMilli", 0) + EXCLUDED."countedMilli",
-                    "updatedAt" = now()
+                    "expectedMilli" = EXCLUDED."expectedMilli", "updatedAt" = now()
       RETURNING "variantId", "countedMilli", "expectedMilli"`;
   }
   const row = rows[0];
@@ -235,7 +250,8 @@ export async function scanItem(tx: Tx, stocktakeId: string, code: string): Promi
     unit: h.unit,
   }));
   const exact = found.filter((h) => h.exact);
-  const only = exact.length === 1 ? exact[0]! : found.length === 1 ? found[0]! : null;
+  // Only an EXACT barcode/SKU/PLU match may auto-count; any fuzzy hit is chosen by the operator.
+  const only = exact.length === 1 ? exact[0]! : null;
   if (found.length === 0) return { kind: "none" };
   if (!only) return { kind: "choose", hits };
   const hit = hits.find((h) => h.variantId === only.variantId)!;
@@ -281,22 +297,39 @@ export async function finalizeStocktake(
       stocktakeId: input.id,
       variant: { product: { trackStock: true, type: "STANDARD" } },
     },
-    select: { id: true, variantId: true, countedMilli: true },
+    select: { id: true, variantId: true, countedMilli: true, expectedMilli: true },
   });
   const effective = lines
     .map((line) => ({ ...line, target: line.countedMilli ?? (input.countAll ? 0 : null) }))
     .filter((line): line is typeof line & { target: number } => line.target !== null);
-  const posted = await postStockMovements(tx, {
+  // Counted lines post counted - expected (movements since the count survive);
+  // uncounted lines under "count all" are set to zero against the live balance.
+  const plan = effective.map((line) => {
+    const delta = line.countedMilli !== null ? line.target - (line.expectedMilli ?? 0) : null;
+    return { line, delta };
+  });
+  const toPost = plan.flatMap(({ line, delta }): StockLine[] => {
+    if (delta === null) return [{ variantId: line.variantId, countedMilli: 0 }];
+    if (delta === 0) return [];
+    return [{ variantId: line.variantId, qtyDeltaMilli: delta }];
+  });
+  const postedLines = await postStockMovements(tx, {
     locationId: stocktake.locationId,
     type: "STOCKTAKE",
     createdById: actor.id,
     refs: { stocktakeId: input.id },
-    lines: effective.map((line) => ({ variantId: line.variantId, countedMilli: line.target })),
+    lines: toPost,
   });
-  for (const [index, line] of effective.entries()) {
+  let cursor = 0;
+  const variances: number[] = [];
+  for (const { line, delta } of plan) {
+    let variance: number;
+    if (delta === 0) variance = 0;
+    else variance = postedLines[cursor++]!.qtyDeltaMilli;
+    variances.push(variance);
     await tx.stocktakeLine.update({
       where: { id: line.id },
-      data: { countedMilli: line.target, varianceMilli: posted[index]!.qtyDeltaMilli },
+      data: { countedMilli: line.target, varianceMilli: variance },
     });
   }
   await tx.stocktake.update({
@@ -304,8 +337,8 @@ export async function finalizeStocktake(
     data: { status: "COMPLETED", completedById: actor.id, completedAt: new Date() },
   });
   const result: FinalizeResult = {
-    posted: posted.filter((p) => p.qtyDeltaMilli !== 0).length,
-    unchanged: posted.filter((p) => p.qtyDeltaMilli === 0).length,
+    posted: variances.filter((v) => v !== 0).length,
+    unchanged: variances.filter((v) => v === 0).length,
     skippedUncounted: lines.length - effective.length,
   };
   await audit(tx, {

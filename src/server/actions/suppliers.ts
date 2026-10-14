@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { can } from "@/domain/access";
 import { supplierInputSchema, supplierItemInputSchema } from "@/domain/purchasing";
 import { db } from "../db";
 import {
@@ -53,7 +54,9 @@ export const saveSupplierItemAction = defineAction({
   access: "purchasing.manage",
   input: supplierItemInputSchema,
   async run({ input, user, meta }) {
-    await db.$transaction((tx) => saveSupplierItem(tx, input, user, meta));
+    await db.$transaction((tx) =>
+      saveSupplierItem(tx, input, user, meta, { writeCost: can(user, "reports.view_costs") }),
+    );
     revalidatePath(PATH, "layout");
     return { ok: true };
   },

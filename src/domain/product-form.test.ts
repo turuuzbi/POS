@@ -57,7 +57,65 @@ describe("reconcileVariants", () => {
       { option1: "S", option2: "", option3: "", sku: "A" },
       { option1: "M", option2: "", option3: "", sku: "B" },
     ];
-    expect(reconcileVariants([], rows, create)).toEqual([rows[0]]);
+    expect(reconcileVariants([], rows, create)).toEqual([
+      { option1: "", option2: "", option3: "", sku: "A" },
+    ]);
+  });
+  it("remaps rows when an option slot is removed or reordered", () => {
+    type R = { option1: string; option2: string; option3: string; sku: string };
+    const rows: R[] = [
+      { option1: "Red", option2: "M", option3: "", sku: "RM" },
+      { option1: "Red", option2: "L", option3: "", sku: "RL" },
+      { option1: "Blue", option2: "M", option3: "", sku: "BM" },
+    ];
+    const previous = [
+      { name: "Color", values: ["Red", "Blue"] },
+      { name: "Size", values: ["M", "L"] },
+    ];
+    const swapped = reconcileVariants(
+      [
+        { name: "Size", values: ["M", "L"] },
+        { name: "Color", values: ["Red", "Blue"] },
+      ],
+      rows,
+      create,
+      previous,
+    );
+    expect(swapped.map((r) => [r.option1, r.option2, r.sku])).toEqual([
+      ["M", "Red", "RM"],
+      ["M", "Blue", "BM"],
+      ["L", "Red", "RL"],
+      ["L", "Blue", ""],
+    ]);
+    // Removing Color: Size is now slot 1; rows keyed by size survive (first per size).
+    const removed = reconcileVariants(
+      [{ name: "Size", values: ["M", "L"] }],
+      rows,
+      create,
+      previous,
+    );
+    expect(removed.map((r) => [r.option1, r.sku])).toEqual([
+      ["M", "RM"],
+      ["L", "RL"],
+    ]);
+    // A rename pairs positionally.
+    const renamed = reconcileVariants(
+      [
+        { name: "Colour", values: ["Red", "Blue"] },
+        { name: "Size", values: ["M", "L"] },
+      ],
+      rows,
+      create,
+      previous,
+    );
+    expect(renamed.filter((r) => r.sku).map((r) => r.sku)).toEqual(["RM", "RL", "BM"]);
+  });
+  it("keeps one row with cleared options when every option is removed", () => {
+    const rows = [{ option1: "S", option2: "X", option3: "", sku: "A", id: "v1" }];
+    const [only] = reconcileVariants([], rows, (v) => ({ ...v, sku: "", id: "" }), [
+      { name: "Size", values: ["S"] },
+    ]);
+    expect(only).toEqual({ option1: "", option2: "", option3: "", sku: "A", id: "v1" });
   });
   it("creates a blank row when nothing exists", () => {
     expect(reconcileVariants([], [], create)).toEqual([

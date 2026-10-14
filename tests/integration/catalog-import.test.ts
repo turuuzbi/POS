@@ -243,6 +243,38 @@ describe("catalog import", () => {
     expect(await db.product.count()).toBe(1);
   });
 
+  it("re-importing an unedited export creates nothing for variants without SKU or barcode", async () => {
+    const tax = await db.taxClass.findFirstOrThrow();
+    const shirt = await db.product.create({
+      data: {
+        name: "Shirt",
+        taxClassId: tax.id,
+        options: { create: { name: "Size", position: 0, values: ["S", "M"] } },
+        variants: {
+          create: [
+            { option1: "S", price: 1000n, position: 0 },
+            { option1: "M", price: 1200n, position: 1 },
+            { option1: "L", price: 1300n, sku: "SH-L", position: 2 },
+          ],
+        },
+      },
+    });
+    const plain = await db.product.create({
+      data: { name: "Plain", taxClassId: tax.id, variants: { create: { price: 500n } } },
+    });
+    const csv = await exportAll(true);
+    const result = await plan(csv);
+    expect(result.issues).toEqual([]);
+    expect(result.items.map((i) => [i.action, i.newVariants].join(":")).sort()).toEqual([
+      "update:0",
+      "update:0",
+    ]);
+    expect((await commit(csv)).committed).toBe(true);
+    expect(await db.product.count()).toBe(2);
+    expect(await db.productVariant.count({ where: { productId: shirt.id } })).toBe(3);
+    expect(await db.productVariant.count({ where: { productId: plain.id } })).toBe(1);
+  });
+
   it("export hides cost for users without the permission", async () => {
     await createProduct({ name: "P", cost: 777n });
     const csv = await exportAll(false);

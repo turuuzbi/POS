@@ -68,26 +68,41 @@ export default async function StockVariantPage({
   const qty = (milli: number) => `${formatQty(milli, variant.unit, { locale })} ${unit}`;
   const low = isLowStock(variant.onHandMilli, variant.reorderPointMilli);
 
+  // Targets need their own permission (this page only needs inventory.view): plain text otherwise.
+  const canAdjust = can(user, "inventory.adjust");
+  const canReceive = can(user, "inventory.receive");
+  const canStocktake = can(user, "inventory.stocktake");
   const reference = (row: LedgerRow): React.ReactNode => {
     if (row.adjustmentId) {
-      return (
+      const label = t("ref.adjustment", { id: short(row.adjustmentId) });
+      return canAdjust ? (
         <Link href={`/inventory/adjustments/${row.adjustmentId}`} className="underline">
-          {t("ref.adjustment", { id: short(row.adjustmentId) })}
+          {label}
         </Link>
+      ) : (
+        label
       );
     }
     if (row.goodsReceiptId) {
-      return (
+      const label = t("ref.goodsReceipt", {
+        number: row.goodsReceiptNumber ?? short(row.goodsReceiptId),
+      });
+      return canReceive ? (
         <Link href={`/purchasing/receipts/${row.goodsReceiptId}`} className="underline">
-          {t("ref.goodsReceipt", { number: row.goodsReceiptNumber ?? short(row.goodsReceiptId) })}
+          {label}
         </Link>
+      ) : (
+        label
       );
     }
     if (row.stocktakeId) {
-      return (
+      const label = t("ref.stocktake", { number: row.stocktakeNumber ?? short(row.stocktakeId) });
+      return canStocktake ? (
         <Link href={`/inventory/stocktakes/${row.stocktakeId}`} className="underline">
-          {t("ref.stocktake", { number: row.stocktakeNumber ?? short(row.stocktakeId) })}
+          {label}
         </Link>
+      ) : (
+        label
       );
     }
     // Sales and refunds have no admin page yet: show the reference as text.

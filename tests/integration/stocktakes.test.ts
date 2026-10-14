@@ -29,6 +29,16 @@ async function stock(locationId: string, userId: string, variantId: string, qtyM
   );
 }
 
+const sell = (locationId: string, userId: string, variantId: string, qty: number) =>
+  db.$transaction((t) =>
+    postStockMovements(t, {
+      locationId,
+      createdById: userId,
+      type: "SALE",
+      lines: [{ variantId, qtyDeltaMilli: units(-qty) }],
+    }),
+  );
+
 const onHand = async (variantId: string, locationId: string) =>
   (await db.stockLevel.findUnique({ where: { variantId_locationId: { variantId, locationId } } }))
     ?.onHandMilli ?? 0;
@@ -81,33 +91,53 @@ describe("stocktakes", () => {
     expect(lines.some((l) => l.variantId === service.variant.id)).toBe(false);
   });
 
-  it("finalize respects movements that happened during the count", async () => {
+  it("finalize keeps movements that happened after the item was counted", async () => {
     const { location, user } = await setup();
     const { variant } = await createProduct();
     await stock(location.id, user.id, variant.id, units(10));
     const st = await start(location.id, user);
-    await count(st.id, variant.id, "set", units(8)); // shelf shows 8
-    // A sale of 3 rings up while counting: the system now says 7.
-    await db.$transaction((t) =>
-      postStockMovements(t, {
-        locationId: location.id,
-        createdById: user.id,
-        type: "SALE",
-        lines: [{ variantId: variant.id, qtyDeltaMilli: units(-3) }],
-      }),
-    );
+    await count(st.id, variant.id, "set", units(10)); // shelf matches: 10
+    // A sale of 3 rings up after the count: the system now says 7.
+    await sell(location.id, user.id, variant.id, 3);
+    const result = await finalize(st.id, user);
+    expect(result).toMatchObject({ posted: 0, unchanged: 1 });
+    expect(await onHand(variant.id, location.id)).toBe(units(7));
+    expect(await db.stockMovement.count({ where: { type: "STOCKTAKE" } })).toBe(0);
+    expect(await findLedgerMismatches(db)).toEqual([]);
+  });
+
+  it("finalize posts the variance seen at count time as a delta", async () => {
+    const { location, user } = await setup();
+    const { variant } = await createProduct();
+    await stock(location.id, user.id, variant.id, units(10));
+    const st = await start(location.id, user);
+    await count(st.id, variant.id, "set", units(8)); // shelf shows 8 against 10
+    await sell(location.id, user.id, variant.id, 3); // now 7
     const result = await finalize(st.id, user);
     expect(result.posted).toBe(1);
-    // Variance is against the live balance (7 → 8 = +1), not the snapshot (10 → 8 = -2).
     const movement = await db.stockMovement.findFirstOrThrow({ where: { type: "STOCKTAKE" } });
-    expect(movement.qtyDeltaMilli).toBe(units(1));
-    expect(movement.balanceAfterMilli).toBe(units(8));
+    expect(movement.qtyDeltaMilli).toBe(units(-2));
+    expect(movement.balanceAfterMilli).toBe(units(5));
     expect(movement.stocktakeId).toBe(st.id);
-    expect(await onHand(variant.id, location.id)).toBe(units(8));
+    expect(await onHand(variant.id, location.id)).toBe(units(5));
     const line = await db.stocktakeLine.findFirstOrThrow({ where: { stocktakeId: st.id } });
     expect(line.expectedMilli).toBe(units(10));
-    expect(line.varianceMilli).toBe(units(1));
+    expect(line.varianceMilli).toBe(units(-2));
     expect(await findLedgerMismatches(db)).toEqual([]);
+  });
+
+  it("a recount refreshes the on-hand it is measured against", async () => {
+    const { location, user } = await setup();
+    const { variant } = await createProduct();
+    await stock(location.id, user.id, variant.id, units(10));
+    const st = await start(location.id, user);
+    await count(st.id, variant.id, "set", units(10));
+    await sell(location.id, user.id, variant.id, 3);
+    await count(st.id, variant.id, "set", units(7)); // recounted after the sale
+    await finalize(st.id, user);
+    expect(await onHand(variant.id, location.id)).toBe(units(7));
+    const line = await db.stocktakeLine.findFirstOrThrow({ where: { stocktakeId: st.id } });
+    expect(line.expectedMilli).toBe(units(7));
   });
 
   it("a sale landing concurrently with finalize serialises on the stock lock", async () => {
@@ -116,23 +146,15 @@ describe("stocktakes", () => {
     await stock(location.id, user.id, variant.id, units(10));
     const st = await start(location.id, user);
     await count(st.id, variant.id, "set", units(6));
-    const sale = db.$transaction((t) =>
-      postStockMovements(t, {
-        locationId: location.id,
-        createdById: user.id,
-        type: "SALE",
-        lines: [{ variantId: variant.id, qtyDeltaMilli: units(-1) }],
-      }),
-    );
-    await Promise.all([finalize(st.id, user), sale]);
-    // Whichever ran last, the count wins or the sale follows it; the chain stays unbroken.
+    await Promise.all([finalize(st.id, user), sell(location.id, user.id, variant.id, 1)]);
+    // Both movements apply in either order: 10 - 4 (count variance) - 1 (sale).
     const ledger = await db.stockMovement.findMany({ orderBy: { seq: "asc" } });
     let running = 0;
     for (const m of ledger) {
       running += m.qtyDeltaMilli;
       expect(m.balanceAfterMilli).toBe(running);
     }
-    expect([units(5), units(6)]).toContain(await onHand(variant.id, location.id));
+    expect(await onHand(variant.id, location.id)).toBe(units(5));
     expect(await findLedgerMismatches(db)).toEqual([]);
   });
 
@@ -255,5 +277,29 @@ describe("stocktakes", () => {
     const result = await finalize(st.id, user);
     expect(result).toMatchObject({ posted: 0, unchanged: 1 });
     expect(await db.stockMovement.count({ where: { type: "STOCKTAKE" } })).toBe(0);
+  });
+
+  it("scan auto-counts only on an exact code; a fuzzy single hit asks to choose", async () => {
+    const { location, user } = await setup();
+    const { variant } = await createProduct({ name: "Cola Zero Unique", sku: "COLA-ZERO-1" });
+    const st = await start(location.id, user);
+    const scan = (code: string) => db.$transaction((t) => scanItem(t, st.id, code));
+    const fuzzy = await scan("cola zero");
+    expect(fuzzy).toMatchObject({ kind: "choose" });
+    expect(await db.stocktakeLine.count({ where: { countedMilli: { not: null } } })).toBe(0);
+    expect(await scan("COLA-ZERO-1")).toMatchObject({ kind: "counted", countedMilli: units(1) });
+    void variant;
+  });
+
+  it("count all treats uncounted lines as zero against the live balance", async () => {
+    const { location, user } = await setup();
+    const { variant } = await createProduct();
+    await stock(location.id, user.id, variant.id, units(5));
+    const st = await start(location.id, user);
+    await sell(location.id, user.id, variant.id, 2);
+    await finalize(st.id, user, true);
+    expect(await onHand(variant.id, location.id)).toBe(0);
+    const line = await db.stocktakeLine.findFirstOrThrow({ where: { stocktakeId: st.id } });
+    expect(line.varianceMilli).toBe(units(-3));
   });
 });

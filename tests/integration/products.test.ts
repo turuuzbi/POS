@@ -106,6 +106,13 @@ describe("product images", () => {
 });
 
 describe("listProducts", () => {
+  it("clamps an out-of-range page to the last page", async () => {
+    await create("Rice");
+    const result = await listProducts({ page: 99 }, { locationIds: "ALL" });
+    expect(result.page).toBe(1);
+    expect(result.rows).toHaveLength(1);
+  });
+
   it("shows on-hand per accessible location only", async () => {
     const a = await createLocation({ name: "A" });
     const b = await createLocation({ name: "B" });
@@ -166,7 +173,8 @@ describe("listProducts", () => {
 
     const result = await listProducts({ status: "all", page: 9 }, scope);
     expect(result.total).toBe(3);
-    expect(result.rows).toEqual([]);
+    expect(result.page).toBe(1); // clamped to the last page
+    expect(result.rows).toHaveLength(3);
   });
 
   it("includes archived references the product already uses in the form options", async () => {

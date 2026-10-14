@@ -122,7 +122,14 @@ export function AdjustmentForm({
             id="adj-reason"
             value={reason}
             aria-describedby="adj-reason-hint"
-            onChange={(e) => setReason(e.target.value as AdjustmentReason)}
+            onChange={(e) => {
+              const next = e.target.value as AdjustmentReason;
+              // Typed quantities mean different things per direction: start over.
+              if (REASON_DIRECTION[next] !== direction) {
+                setLines(lines.map((line) => ({ ...line, text: "", mode: "delta" })));
+              }
+              setReason(next);
+            }}
           >
             {ADJUSTMENT_REASONS.map((r) => (
               <option key={r} value={r}>

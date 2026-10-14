@@ -128,7 +128,9 @@ export async function saveSupplierItem(
   input: SupplierItemInput,
   actor: Actor,
   meta: Meta = {},
+  options: { writeCost?: boolean } = {},
 ): Promise<void> {
+  const { writeCost = true } = options;
   const [supplier, variant] = await Promise.all([
     tx.supplier.findUnique({ where: { id: input.supplierId }, select: { id: true } }),
     tx.productVariant.findUnique({ where: { id: input.variantId }, select: { id: true } }),
@@ -136,13 +138,18 @@ export async function saveSupplierItem(
   if (!supplier || !variant) throw new ActionError("NOT_FOUND");
   const data = {
     supplierSku: input.supplierSku,
-    cost: input.cost,
     isPreferred: input.isPreferred,
   };
+  // Without cost access the stored cost is never overwritten (null on create).
   await tx.supplierItem.upsert({
     where: { supplierId_variantId: { supplierId: input.supplierId, variantId: input.variantId } },
-    create: { supplierId: input.supplierId, variantId: input.variantId, ...data },
-    update: data,
+    create: {
+      supplierId: input.supplierId,
+      variantId: input.variantId,
+      ...data,
+      cost: writeCost ? input.cost : null,
+    },
+    update: writeCost ? { ...data, cost: input.cost } : data,
   });
   await audit(tx, {
     actorId: actor.id,
@@ -496,13 +503,23 @@ export async function receiveGoods(
     });
   }
 
+  // An ad-hoc line by a user who can't enter costs carries the average cost, not a supplier price.
+  const recordCost = trustInputCost || Boolean(input.purchaseOrderId);
   if (supplierId) {
     // Last cost per supplier item; sorted so concurrent receipts take row locks in one order.
     for (const line of [...resolved].sort((a, b) => (a.variantId < b.variantId ? -1 : 1))) {
-      await tx.$executeRaw`
-        INSERT INTO "SupplierItem" ("supplierId", "variantId", "cost", "isPreferred")
-        VALUES (${supplierId}::uuid, ${line.variantId}::uuid, ${line.unitCost}, false)
-        ON CONFLICT ("supplierId", "variantId") DO UPDATE SET "cost" = EXCLUDED."cost"`;
+      if (recordCost) {
+        await tx.$executeRaw`
+          INSERT INTO "SupplierItem" ("supplierId", "variantId", "cost", "isPreferred")
+          VALUES (${supplierId}::uuid, ${line.variantId}::uuid, ${line.unitCost}, false)
+          ON CONFLICT ("supplierId", "variantId") DO UPDATE SET "cost" = EXCLUDED."cost"`;
+      } else {
+        // The line cost is only the variant's average: link the item, keep its real last cost.
+        await tx.$executeRaw`
+          INSERT INTO "SupplierItem" ("supplierId", "variantId", "isPreferred")
+          VALUES (${supplierId}::uuid, ${line.variantId}::uuid, false)
+          ON CONFLICT ("supplierId", "variantId") DO NOTHING`;
+      }
     }
   }
 

@@ -9,6 +9,7 @@ import {
   type ImportIssueCode,
   type ProductGroup,
 } from "@/domain/csv-catalog";
+import type { Prisma } from "@/generated/prisma/client";
 import { audit } from "../audit";
 import type { Db, Tx } from "../db";
 import type { RequestMeta } from "../request";
@@ -21,7 +22,11 @@ import { saveProduct, type Actor } from "./catalog";
  * file is valid.
  *
  * Matching: a row updates the existing variant that has its SKU (case-
- * insensitive) or one of its barcodes; otherwise it is a new variant. A group
+ * insensitive) or one of its barcodes. Failing that, when product_key is the id
+ * of an existing product (an exported file), the row matches that product's
+ * variant with the same option values / variant name (variants may have no SKU
+ * or barcode), so re-importing an unedited export changes nothing. Otherwise
+ * it is a new variant. A group
  * of rows matching one existing product updates that product (variants not in
  * the file are kept as they are); matching two products is an error.
  * Blank optional cells keep the current value on update and take a default on
@@ -31,6 +36,7 @@ import { saveProduct, type Actor } from "./catalog";
 export const PREVIEW_ROW_LIMIT = 50;
 export const ISSUE_LIMIT = 200;
 const CHUNK = 1000;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface PlanItem {
   action: "create" | "update";
@@ -276,6 +282,20 @@ async function planGroup(
   const head = group.head;
   const firstLine = group.rows[0]!.line;
 
+  // product_key from an export names the product itself.
+  const productInclude = {
+    options: { orderBy: { position: "asc" } },
+    variants: {
+      orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+      include: { barcodes: true },
+    },
+  } satisfies Prisma.ProductInclude;
+  const keyId =
+    head.productKey && UUID.test(head.productKey) ? head.productKey.toLowerCase() : null;
+  const keyed = keyId
+    ? await client.product.findUnique({ where: { id: keyId }, include: productInclude })
+    : null;
+
   // Which existing variant does each row hit?
   const matched: (ExistingVariant | undefined)[] = group.rows.map((row) => {
     const hits = new Set<ExistingVariant>();
@@ -292,6 +312,29 @@ async function planGroup(
     return [...hits][0];
   });
   const productIds = new Set(matched.flatMap((v) => (v ? [v.productId] : [])));
+  if (keyed) {
+    productIds.add(keyed.id);
+    if (productIds.size === 1) {
+      // Rows without a SKU/barcode hit: pair with the product's variant of the same options/name.
+      const claimed = new Set(matched.flatMap((v) => (v ? [v.id] : [])));
+      const norm = (value: string | null | undefined) => (value ?? "").trim().toLowerCase();
+      group.rows.forEach((row, i) => {
+        if (matched[i] || row.sku || row.barcodes.length > 0) return;
+        const candidate = keyed.variants.find(
+          (v) =>
+            !claimed.has(v.id) &&
+            [v.option1, v.option2, v.option3].every(
+              (o, slot) => norm(o) === norm(row.options[slot]),
+            ) &&
+            (row.variantName === undefined || norm(v.name) === norm(row.variantName)),
+        );
+        if (candidate) {
+          matched[i] = candidate;
+          claimed.add(candidate.id);
+        }
+      });
+    }
+  }
   if (productIds.size > 1) {
     group.rows.forEach((row, i) => {
       if (matched[i]) flag(row.line, row.sku ? "sku" : "barcodes", "ambiguousMatch");
@@ -316,18 +359,12 @@ async function planGroup(
   }
 
   const existingId = [...productIds][0] ?? null;
-  const existing = existingId
-    ? await client.product.findUnique({
-        where: { id: existingId },
-        include: {
-          options: { orderBy: { position: "asc" } },
-          variants: {
-            orderBy: [{ position: "asc" }, { createdAt: "asc" }],
-            include: { barcodes: true },
-          },
-        },
-      })
-    : null;
+  const existing =
+    keyed && keyed.id === existingId
+      ? keyed
+      : existingId
+        ? await client.product.findUnique({ where: { id: existingId }, include: productInclude })
+        : null;
 
   // Category and tax class by name.
   let categoryId: string | null = existing?.categoryId ?? null;

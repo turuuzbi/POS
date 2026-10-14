@@ -57,7 +57,7 @@ async function categorySubtree(categoryId: string): Promise<string[]> {
 export async function listProducts(filters: ProductListFilters, user: Scope) {
   const status = filters.status ?? "active";
   const q = filters.q?.trim().slice(0, 100);
-  const page = Math.max(1, Math.floor(filters.page ?? 1));
+  const requestedPage = Math.max(1, Math.floor(filters.page ?? 1));
 
   const and: Prisma.ProductWhereInput[] = [];
   if (status !== "all") and.push({ isActive: status === "active" });
@@ -77,8 +77,10 @@ export async function listProducts(filters: ProductListFilters, user: Scope) {
   }
   const where: Prisma.ProductWhereInput = { AND: and };
 
-  const [total, products, locations] = await Promise.all([
-    db.product.count({ where }),
+  const total = await db.product.count({ where });
+  const pages = Math.max(1, Math.ceil(total / PRODUCT_PAGE_SIZE));
+  const page = Math.min(requestedPage, pages);
+  const [products, locations] = await Promise.all([
     db.product.findMany({
       where,
       orderBy: [{ name: "asc" }, { id: "asc" }],
@@ -145,7 +147,7 @@ export async function listProducts(filters: ProductListFilters, user: Scope) {
     locations,
     total,
     page,
-    pages: Math.max(1, Math.ceil(total / PRODUCT_PAGE_SIZE)),
+    pages,
   };
 }
 

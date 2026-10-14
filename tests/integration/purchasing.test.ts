@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { fromMajor } from "@/domain/money";
-import type { PurchaseOrderInput } from "@/domain/purchasing";
+import { receiptInputSchema, type PurchaseOrderInput } from "@/domain/purchasing";
 import { units } from "@/domain/qty";
 import { ActionError } from "@/server/errors";
 import {
@@ -120,6 +120,46 @@ describe("purchasing", () => {
       expect(rows[0]).toMatchObject({ supplierSku: "S-1", cost: null, isPreferred: true });
       await db.$transaction((tx) => removeSupplierItem(tx, ctx.supplierId, variant.id, ctx.user));
       expect(await db.supplierItem.count()).toBe(0);
+    });
+
+    it("without cost access an edit keeps the stored cost and a create stores none", async () => {
+      const ctx = await setup();
+      const a = await createProduct();
+      const b = await createProduct();
+      const item = {
+        supplierId: ctx.supplierId,
+        variantId: a.variant.id,
+        supplierSku: "S-1",
+        cost: fromMajor(500),
+        isPreferred: false,
+      };
+      await db.$transaction((tx) => saveSupplierItem(tx, item, ctx.user));
+      await db.$transaction((tx) =>
+        saveSupplierItem(
+          tx,
+          { ...item, cost: null, isPreferred: true },
+          ctx.user,
+          {},
+          {
+            writeCost: false,
+          },
+        ),
+      );
+      await db.$transaction((tx) =>
+        saveSupplierItem(
+          tx,
+          { ...item, variantId: b.variant.id, cost: fromMajor(9) },
+          ctx.user,
+          {},
+          {
+            writeCost: false,
+          },
+        ),
+      );
+      const rowA = await db.supplierItem.findFirstOrThrow({ where: { variantId: a.variant.id } });
+      expect(rowA).toMatchObject({ cost: fromMajor(500), isPreferred: true });
+      const rowB = await db.supplierItem.findFirstOrThrow({ where: { variantId: b.variant.id } });
+      expect(rowB.cost).toBeNull();
     });
   });
 
@@ -365,6 +405,58 @@ describe("purchasing", () => {
         { trustInputCost: false },
       );
       expect(await db.goodsReceiptLine.count({ where: { unitCost: 1n } })).toBe(0);
+    });
+
+    it("an ad-hoc receipt by a user without cost access leaves the supplier cost alone", async () => {
+      const ctx = await setup();
+      const a = await createProduct({ cost: fromMajor(300) });
+      const b = await createProduct({ cost: fromMajor(300) });
+      await db.supplierItem.create({
+        data: { supplierId: ctx.supplierId, variantId: a.variant.id, cost: fromMajor(250) },
+      });
+      await receive(
+        ctx,
+        {
+          locationId: ctx.location.id,
+          supplierId: ctx.supplierId,
+          lines: [
+            { variantId: a.variant.id, qtyMilli: units(1), unitCost: 0n },
+            { variantId: b.variant.id, qtyMilli: units(1), unitCost: 0n },
+          ],
+        },
+        { trustInputCost: false },
+      );
+      const rows = await db.supplierItem.findMany({ orderBy: { cost: "asc" } });
+      expect(rows).toHaveLength(2);
+      expect(rows.find((r) => r.variantId === a.variant.id)?.cost).toBe(fromMajor(250));
+      expect(rows.find((r) => r.variantId === b.variant.id)?.cost).toBeNull();
+    });
+
+    it("rejects an order from ORDERED straight to RECEIVED", async () => {
+      const ctx = await setup();
+      const { variant } = await createProduct();
+      const po = await orderedPo(ctx, [{ variantId: variant.id, qty: 1, cost: 100n }]);
+      expect(
+        (
+          await failure(
+            db.$transaction((tx) => transitionPurchaseOrder(tx, po.id, "RECEIVED", ctx.user)),
+          )
+        ).code,
+      ).toBe("INVALID_STATE");
+    });
+
+    it("the receipt schema refuses a blank unit cost", () => {
+      const base = { locationId: crypto.randomUUID() };
+      const line = { variantId: crypto.randomUUID(), qtyMilli: units(1) };
+      expect(
+        receiptInputSchema.safeParse({ ...base, lines: [{ ...line, unitCost: "" }] }).success,
+      ).toBe(false);
+      expect(
+        receiptInputSchema.safeParse({ ...base, lines: [{ ...line, unitCost: " " }] }).success,
+      ).toBe(false);
+      expect(
+        receiptInputSchema.safeParse({ ...base, lines: [{ ...line, unitCost: "0" }] }).success,
+      ).toBe(true);
     });
 
     it("rejects a PO line that belongs to another order and out-of-scope locations", async () => {

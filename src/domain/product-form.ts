@@ -45,33 +45,69 @@ export interface MatrixRow {
 const rowKey = (values: readonly (string | null | undefined)[]) =>
   values.map((v) => v ?? "").join("\u0000");
 
+/** The options that take part in the matrix, in slot order (option1..3 follow this order). */
+export function usableOptions(options: readonly OptionDraft[]): OptionDraft[] {
+  return options.filter((o) => o.name.trim() && o.values.length > 0);
+}
+
+const nameKey = (name: string) => name.trim().toLowerCase();
+
 /**
  * Reconcile variant rows with the option values: keep rows whose combination
  * still exists (so SKU, price and ids survive), drop the rest, add new
- * combinations via `create`. Rows come back in matrix order. Without options
- * the product has a single variant: the first existing row is kept.
+ * combinations via `create`. Rows come back in matrix order.
+ *
+ * `previous` are the options the rows' option1..3 were generated from (slot
+ * order). Rows are remapped to the new slot order by option name (options
+ * that were renamed pair up positionally), so removing or reordering an
+ * option keeps the variants. Without options the product has a single
+ * variant: the first existing row, with its option values cleared.
  */
 export function reconcileVariants<R extends MatrixRow>(
   options: readonly OptionDraft[],
   rows: readonly R[],
   create: (values: MatrixRow, template: R | undefined) => R,
+  previous?: readonly OptionDraft[],
 ): R[] {
-  const usable = options.filter((o) => o.name.trim() && o.values.length > 0);
+  const usable = usableOptions(options);
   if (usable.length === 0) {
     return rows.length
-      ? [rows[0]!]
+      ? [{ ...rows[0]!, option1: "", option2: "", option3: "" }]
       : [create({ option1: "", option2: "", option3: "" }, undefined)];
   }
-  const byKey = new Map(
-    rows.map((r) => [rowKey([r.option1, r.option2, r.option3].slice(0, usable.length)), r]),
-  );
+  const old = previous ? usableOptions(previous) : usable;
+  // Old slot of each new slot: by name first, then leftover options in order (renames).
+  const oldSlot: number[] = usable.map(() => -1);
+  const taken = new Set<number>();
+  usable.forEach((option, j) => {
+    const i = old.findIndex((o, k) => !taken.has(k) && nameKey(o.name) === nameKey(option.name));
+    if (i >= 0) {
+      oldSlot[j] = i;
+      taken.add(i);
+    }
+  });
+  usable.forEach((_, j) => {
+    if (oldSlot[j] !== -1) return;
+    const i = old.findIndex((_o, k) => !taken.has(k));
+    if (i >= 0) {
+      oldSlot[j] = i;
+      taken.add(i);
+    }
+  });
+  const byKey = new Map<string, R>();
+  for (const row of rows) {
+    const slots = [row.option1, row.option2, row.option3];
+    const key = rowKey(oldSlot.map((i) => (i >= 0 ? slots[i] : "")));
+    if (!byKey.has(key)) byKey.set(key, row);
+  }
   return optionCombinations(usable).map((combo) => {
     const values: MatrixRow = {
       option1: combo[0] ?? "",
       option2: combo[1] ?? "",
       option3: combo[2] ?? "",
     };
-    return byKey.get(rowKey(combo)) ?? create(values, rows[0]);
+    const kept = byKey.get(rowKey(combo));
+    return kept ? { ...kept, ...values } : create(values, rows[0]);
   });
 }
 

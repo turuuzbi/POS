@@ -92,9 +92,11 @@ export async function postStockMovements(tx: Tx, input: PostStockInput): Promise
   }
 
   // Lock order: variants (receipts only), then levels — both by variant id.
+  let lockedCost: { id: string; cost: bigint }[] = [];
   if (input.updateAverageCost) {
-    await tx.$queryRaw`
-      SELECT "id" FROM "ProductVariant" WHERE "id" = ANY(${variantIds}::uuid[])
+    // Re-read the cost under the lock: the pre-lock read may predate a concurrent receipt.
+    lockedCost = await tx.$queryRaw<{ id: string; cost: bigint }[]>`
+      SELECT "id", "cost" FROM "ProductVariant" WHERE "id" = ANY(${variantIds}::uuid[])
       ORDER BY "id" FOR UPDATE`;
   }
   await tx.$executeRaw`
@@ -118,6 +120,8 @@ export async function postStockMovements(tx: Tx, input: PostStockInput): Promise
     for (const row of rows) elsewhere.set(row.variantId, Number(row.total));
   }
   const cost = new Map(variants.map((v) => [v.id, v.cost]));
+  for (const row of lockedCost) cost.set(row.id, BigInt(row.cost));
+  const costBefore = new Map(cost);
 
   const posted: PostedLine[] = [];
   const movements: {
@@ -188,7 +192,7 @@ export async function postStockMovements(tx: Tx, input: PostStockInput): Promise
   if (input.updateAverageCost) {
     for (const variant of variants) {
       const next = cost.get(variant.id)!;
-      if (next !== variant.cost) {
+      if (next !== costBefore.get(variant.id)) {
         await tx.productVariant.update({ where: { id: variant.id }, data: { cost: next } });
       }
     }

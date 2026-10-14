@@ -37,6 +37,8 @@ export interface ProductDraft {
   isActive: boolean;
   options: { name: string; valuesText: string }[];
   variants: VariantDraft[];
+  /** The options the variant rows' option1..3 were generated from (client-side bookkeeping). */
+  matrix?: { name: string; values: string[] }[];
 }
 
 export function blankVariant(values: Partial<VariantDraft> = {}): VariantDraft {

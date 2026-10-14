@@ -24,6 +24,7 @@ describe("status transitions", () => {
     expect(canTransition("DRAFT", "RECEIVED")).toBe(false);
     expect(canTransition("ORDERED", "PARTIALLY_RECEIVED")).toBe(true);
     expect(canTransition("ORDERED", "CANCELLED")).toBe(true);
+    expect(canTransition("ORDERED", "RECEIVED")).toBe(false); // nothing received yet
     expect(canTransition("PARTIALLY_RECEIVED", "RECEIVED")).toBe(true);
     expect(canTransition("PARTIALLY_RECEIVED", "CANCELLED")).toBe(false);
     expect(canTransition("RECEIVED", "ORDERED")).toBe(false);

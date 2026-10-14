@@ -27,7 +27,7 @@ export const MAX_PO_LINES = 200;
 
 const TRANSITIONS: Record<PurchaseOrderStatus, readonly PurchaseOrderStatus[]> = {
   DRAFT: ["ORDERED", "CANCELLED"],
-  ORDERED: ["PARTIALLY_RECEIVED", "RECEIVED", "CANCELLED"],
+  ORDERED: ["PARTIALLY_RECEIVED", "CANCELLED"],
   // Closing short (the supplier will not deliver the rest) is PARTIALLY_RECEIVED -> RECEIVED.
   PARTIALLY_RECEIVED: ["RECEIVED"],
   RECEIVED: [],
@@ -152,7 +152,8 @@ const receiptLineSchema = z.object({
   purchaseOrderLineId: z.uuid().optional(),
   variantId: z.uuid().optional(),
   qtyMilli: qtyMilliField,
-  unitCost: moneyField,
+  /** Must be typed (blank is not 0): users who cannot see costs send "0", which the server ignores. */
+  unitCost: z.string().trim().min(1, "invalidMoney").pipe(moneyField),
 });
 
 export const receiptInputSchema = z

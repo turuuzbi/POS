@@ -284,4 +284,28 @@ describe("document numbers", () => {
     );
     expect(await db.$transaction((tx) => nextDocumentNumber(tx, "goodsReceipt"))).toBe("GR-000001");
   });
+
+  it("two parallel receipts of one variant fold into an exact weighted average cost", async () => {
+    const { location, user } = await setup();
+    const { variant } = await createProduct({ cost: 0n });
+    const base = { locationId: location.id, createdById: user.id } as const;
+    await post({
+      ...base,
+      type: "OPENING",
+      lines: [{ variantId: variant.id, qtyDeltaMilli: units(10), unitCost: 1000n }],
+      updateAverageCost: true,
+    });
+    const receipt = () =>
+      post({
+        ...base,
+        type: "PURCHASE_RECEIPT",
+        lines: [{ variantId: variant.id, qtyDeltaMilli: units(10), unitCost: 2000n }],
+        updateAverageCost: true,
+      });
+    await Promise.all([receipt(), receipt()]);
+    // (10@1000 + 10@2000 + 10@2000) / 30 = 1666.67 -> a lost update would give 1500.
+    const cost = (await db.productVariant.findUniqueOrThrow({ where: { id: variant.id } })).cost;
+    expect(cost).toBe(1667n);
+    expect(await findLedgerMismatches(db)).toEqual([]);
+  });
 });

@@ -20,7 +20,7 @@ import {
   PRODUCT_TYPES,
 } from "@/domain/catalog";
 import { formatMoney } from "@/domain/money";
-import { parseOptionValues, reconcileVariants } from "@/domain/product-form";
+import { parseOptionValues, reconcileVariants, usableOptions } from "@/domain/product-form";
 import { UNITS, formatQty, isFractionalUnit, type Unit } from "@/domain/qty";
 import { useAction } from "@/hooks/use-action";
 import { saveProductAction, uploadProductImageAction } from "@/server/actions/products";
@@ -48,7 +48,12 @@ export function ProductForm({
   const tu = useTranslations("units");
   const router = useRouter();
   const { run, pending, errorMessage, fieldErrors } = useAction(saveProductAction);
-  const [draft, setDraft] = useState<ProductDraft>(initial);
+  const [draft, setDraft] = useState<ProductDraft>(() => ({
+    ...initial,
+    matrix: usableOptions(
+      initial.options.map((o) => ({ name: o.name, values: parseOptionValues(o.valuesText) })),
+    ),
+  }));
   const [pendingImage, setPendingImage] = useState<File | null>(null);
   const [finishing, setFinishing] = useState(false);
   const isNew = !initial.id;
@@ -68,20 +73,20 @@ export function ProductForm({
   }
 
   /** Rebuild the variant rows from the option values, keeping rows that still exist. */
-  function regenerate(options: ProductDraft["options"], variants = draft.variants) {
+  function regenerate(d: ProductDraft, options: ProductDraft["options"]) {
     const parsed = options.map((o) => ({ name: o.name, values: parseOptionValues(o.valuesText) }));
-    const next = reconcileVariants(parsed, variants, (values, template) =>
-      blankVariant({ ...values, price: template?.price ?? "", cost: template?.cost ?? "" }),
+    const next = reconcileVariants(
+      parsed,
+      d.variants,
+      (values, template) =>
+        blankVariant({ ...values, price: template?.price ?? "", cost: template?.cost ?? "" }),
+      d.matrix,
     );
-    return next.slice(0, MAX_VARIANTS);
+    return { variants: next.slice(0, MAX_VARIANTS), matrix: usableOptions(parsed) };
   }
 
   function setOptions(options: ProductDraft["options"], regen: boolean) {
-    setDraft((d) => ({
-      ...d,
-      options,
-      variants: regen ? regenerate(options, d.variants) : d.variants,
-    }));
+    setDraft((d) => ({ ...d, options, ...(regen ? regenerate(d, options) : {}) }));
   }
 
   function patchVariant(index: number, changes: Partial<VariantDraft>) {

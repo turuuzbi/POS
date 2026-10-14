@@ -82,7 +82,7 @@ export function ReceiptForm(props: Props) {
           lines: picked.map(({ row, qty }) => ({
             purchaseOrderLineId: row.id,
             qtyMilli: qty,
-            unitCost: row.cost || "0",
+            unitCost: props.showCosts ? row.cost : "0",
           })),
         },
         { onSuccess: done },
@@ -98,7 +98,7 @@ export function ReceiptForm(props: Props) {
           lines: lines.map((l) => ({
             variantId: l.variantId,
             qtyMilli: parseQty(l.qty, l.unit) ?? 0,
-            unitCost: l.cost || "0",
+            unitCost: props.showCosts ? l.cost : "0",
           })),
         },
         { onSuccess: done },
