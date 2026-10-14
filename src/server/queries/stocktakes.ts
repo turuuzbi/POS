@@ -56,12 +56,12 @@ export interface StocktakeLineView {
   sku: string | null;
   barcode: string | null;
   unit: Unit;
-  /** On hand when the line joined the count. */
+  /** On hand when the line was last counted (or joined the count) — the basis of its variance. */
   expectedMilli: number;
-  /** On hand right now (open counts) — what finalize will compare against. */
+  /** On hand right now (open counts); informational. */
   liveMilli: number;
   countedMilli: number | null;
-  /** counted − live while open; the posted delta once completed. null = not counted. */
+  /** counted − expected (what finalize posts, on top of later movements). null = not counted. */
   varianceMilli: number | null;
   /** Variance value; null without reports.view_costs or when not counted. */
   value: bigint | null;
@@ -90,12 +90,16 @@ export interface StocktakeView {
   };
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** One stocktake with its lines. Costs and values are included only when `showCosts`. */
 export async function getStocktake(
   id: string,
   user: Pick<CurrentUser, "locationIds">,
   showCosts: boolean,
 ): Promise<StocktakeView | null> {
+  // A mistyped URL segment is "not found", not a database error.
+  if (!UUID.test(id)) return null;
   const stocktake = await db.stocktake.findFirst({
     where: {
       id,
@@ -154,7 +158,7 @@ export async function getStocktake(
       const variance = open
         ? line.countedMilli === null
           ? null
-          : countVariance(liveMilli, line.countedMilli)
+          : countVariance(expected, line.countedMilli)
         : line.varianceMilli;
       const unitCost = open ? v.cost : (movementCost.get(line.variantId) ?? v.cost);
       return {
@@ -175,9 +179,10 @@ export async function getStocktake(
 
   const summary = summarizeVariance(
     lines.map((l) => ({
-      // Open: compare with live stock. Completed: the stored delta is authoritative.
+      // Counted lines: the basis of their variance (open: counted-time stock; completed: the
+      // stored delta is authoritative). Uncounted lines contribute nothing.
       expectedMilli:
-        stocktake.status === "COMPLETED" && l.countedMilli !== null && l.varianceMilli !== null
+        l.countedMilli !== null && l.varianceMilli !== null
           ? l.countedMilli - l.varianceMilli
           : l.liveMilli,
       countedMilli: l.countedMilli,

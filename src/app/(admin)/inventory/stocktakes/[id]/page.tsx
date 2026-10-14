@@ -162,9 +162,7 @@ export default async function StocktakePage({
                 <TableHeader>
                   <TableRow>
                     <TableHead>{t("item")}</TableHead>
-                    <TableHead className="text-right">
-                      {isOpen ? t("expectedNow") : t("expected")}
-                    </TableHead>
+                    <TableHead className="text-right">{t("expected")}</TableHead>
                     <TableHead className="text-right">{t("counted")}</TableHead>
                     <TableHead className="text-right">{t("variance")}</TableHead>
                     {showCosts ? <TableHead className="text-right">{t("value")}</TableHead> : null}
@@ -182,11 +180,11 @@ export default async function StocktakePage({
                           ) : null}
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
-                          {formatQty(line.liveMilli, line.unit, { locale })}
+                          {formatQty(line.expectedMilli, line.unit, { locale })}
                           {isOpen && line.expectedMilli !== line.liveMilli ? (
                             <div className="text-xs text-muted-foreground">
-                              {t("snapshotNote", {
-                                qty: formatQty(line.expectedMilli, line.unit, { locale }),
+                              {t("liveNote", {
+                                qty: formatQty(line.liveMilli, line.unit, { locale }),
                               })}
                             </div>
                           ) : null}
