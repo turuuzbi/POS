@@ -42,14 +42,14 @@ export const uuidV7 = z
   .string()
   .regex(UUID_V7, "invalid uuid v7")
   .transform((v) => v.toLowerCase());
-const uuid = z.uuid().transform((v) => v.toLowerCase());
+export const uuid = z.uuid().transform((v) => v.toLowerCase());
 
 const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
 /**
  * Optional trimmed text: no lone surrogates (TextEncoder would silently
  * replace them, making different strings hash alike) and "" ≡ absent.
  */
-const optionalText = (max: number) =>
+export const optionalText = (max: number) =>
   z
     .string()
     .trim()
@@ -356,7 +356,7 @@ export interface CheckoutResult {
   replayed: boolean;
 }
 
-const signedMoneyWire = z
+export const signedMoneyWire = z
   .union([z.string().regex(/^-?\d{1,15}$/), z.number().int().safe()])
   .transform((v) => BigInt(v));
 
