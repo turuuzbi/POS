@@ -750,11 +750,26 @@ export function planRefund(
         return ua !== ub ? ua - ub : order.indexOf(b) - order.indexOf(a);
       });
     let left = creditApplied;
-    for (const id of rest) {
-      if (left === 0n) break;
-      const amount = min(left, caps.get(id)!);
+    // Cash is consumed in whole coins first so the remaining cash caps stay on
+    // the coin grid; sub-coin cash is taken only as a last resort.
+    const credit = new Map<string, Money>();
+    const grab = (id: string, want: Money): void => {
+      const amount = min(min(want, left), caps.get(id)!);
+      if (amount <= 0n) return;
       take(id, amount);
       left -= amount;
+      credit.set(id, (credit.get(id) ?? 0n) + amount);
+    };
+    for (const id of rest) {
+      if (methodOf.get(id) === "CASH") grab(id, floorTo(min(left, caps.get(id)!), cashUnit));
+    }
+    for (const id of rest) {
+      if (methodOf.get(id) !== "CASH") grab(id, left);
+    }
+    for (const id of rest) {
+      if (methodOf.get(id) === "CASH") grab(id, left);
+    }
+    for (const [id, amount] of credit) {
       payments.push({
         method: "EXCHANGE_CREDIT",
         amount,

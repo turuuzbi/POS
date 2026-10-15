@@ -32,20 +32,20 @@ import { MAX_QTY_MILLI } from "./qty";
 export const MAX_REFUND_PAYMENT_ENTRIES = 6;
 export const MAX_REFUND_NOTE_LENGTH = 500;
 
-export const refundLineRequestSchema = z.object({
+export const refundLineRequestSchema = z.strictObject({
   saleLineId: uuid,
   qtyMilli: z.number().int().positive().max(MAX_QTY_MILLI),
   restock: z.boolean(),
   reason: z.enum(RETURN_REASONS).optional(),
 });
 
-export const refundPaymentOverrideSchema = z.object({
+export const refundPaymentOverrideSchema = z.strictObject({
   method: z.enum(PAYMENT_METHODS),
   amount: moneyWire.refine((v) => v > 0n, "must be positive"),
 });
 
 export const refundRequestSchema = z
-  .object({
+  .strictObject({
     /** Client-generated UUIDv7: idempotency key and Refund.id. */
     refundId: uuidV7,
     saleId: uuidV7,

@@ -9,7 +9,7 @@
  * `RefundPayment.amount` paid out during the shift. Nothing here reads a clock
  * or the database.
  */
-import { MINOR_PER_MAJOR, fromMajor, sum, type Money } from "./money";
+import { fromMajor, sum, type Money } from "./money";
 
 // ---------------------------------------------------------------------------
 // Denominations
@@ -21,6 +21,9 @@ export type MntDenomination = (typeof MNT_DENOMINATIONS)[number];
 
 /** Upper bound on the count of one denomination (sanity; 100 000 notes of 20 000₮ = 2bn₮). */
 export const MAX_DENOMINATION_COUNT = 100_000;
+
+/** Smallest countable cash unit: the smallest denomination, 10₮, in möngö. */
+export const MIN_CASH_UNIT: Money = fromMajor(10n);
 
 /** Counts keyed by the denomination in ₮ as a string, e.g. `{"20000": 3, "1000": 12}`. */
 export type DenominationCounts = Partial<Record<`${MntDenomination}`, number>>;
@@ -56,7 +59,7 @@ export function parseDenominations(input: unknown): DenominationsResult {
   const counts = {} as Record<`${MntDenomination}`, number>;
   for (const denomination of MNT_DENOMINATIONS) {
     const key = String(denomination) as `${MntDenomination}`;
-    const value = raw[key] ?? 0;
+    const value = key in raw ? raw[key] : 0;
     if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
       issues.push({ code: "INVALID_COUNT", denomination: key });
       counts[key] = 0;
@@ -215,7 +218,7 @@ export interface CashMovementInput {
   expectedCashOnHand: Money;
   /** A manager approved paying out more than the drawer should hold. */
   overdrawApproved?: boolean;
-  /** Smallest coin in möngö; amounts must be multiples. Default 1₮. */
+  /** Smallest countable note in möngö; amounts must be multiples. Default 10₮ (the smallest denomination). */
   cashUnit?: Money;
 }
 
@@ -226,7 +229,7 @@ export type CashMovementResult =
 export function validateCashMovement(input: CashMovementInput): CashMovementResult {
   const issues: { code: CashMovementIssueCode }[] = [];
   let needsOverdrawApproval = false;
-  const unit = input.cashUnit ?? MINOR_PER_MAJOR;
+  const unit = input.cashUnit ?? MIN_CASH_UNIT;
   if (input.shiftStatus !== "OPEN") issues.push({ code: "SHIFT_NOT_OPEN" });
   if (input.amount <= 0n) issues.push({ code: "AMOUNT_NOT_POSITIVE" });
   else if (input.amount > MAX_CASH_MOVEMENT) issues.push({ code: "AMOUNT_TOO_LARGE" });

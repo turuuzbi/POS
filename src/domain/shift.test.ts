@@ -229,9 +229,9 @@ describe("validateCashMovement", () => {
     expect(validateCashMovement({ ...ok, amount: -1n }).ok).toBe(false);
   });
   it("pay-out beyond the drawer needs approval; pay-in never does", () => {
-    const over = validateCashMovement({ ...ok, amount: T(20_001) });
+    const over = validateCashMovement({ ...ok, amount: T(20_010) });
     expect(over).toMatchObject({ ok: false, needsOverdrawApproval: true });
-    expect(validateCashMovement({ ...ok, amount: T(20_001), overdrawApproved: true }).ok).toBe(
+    expect(validateCashMovement({ ...ok, amount: T(20_010), overdrawApproved: true }).ok).toBe(
       true,
     );
     expect(validateCashMovement({ ...ok, type: "CASH_IN", amount: T(10_000_000) }).ok).toBe(true);
@@ -251,5 +251,21 @@ describe("validateCashMovement", () => {
         { type: "CASH_IN", amount: 1n },
       ]),
     ).toEqual({ cashIn: 6n, cashOut: 2n });
+  });
+});
+
+describe("review fixes", () => {
+  it("rejects null counts", () => {
+    expect(parseDenominations({ "20000": null }).ok).toBe(false);
+  });
+  it("cash movements default to the 10 tugrug note unit", () => {
+    const r = validateCashMovement({
+      shiftStatus: "OPEN",
+      type: "CASH_IN",
+      amount: 500n,
+      reason: "x",
+      expectedCashOnHand: 0n,
+    });
+    expect(r.ok).toBe(false);
   });
 });

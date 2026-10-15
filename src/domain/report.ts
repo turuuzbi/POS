@@ -23,6 +23,7 @@ import type { Unit } from "./qty";
 import {
   cashVariance,
   classifyVariance,
+  denominationsTotal,
   expectedCash,
   sumCashMovements,
   type CashMovementKind,
@@ -403,6 +404,9 @@ export interface ZClosing {
 /** The X-report plus the closing count and variance, ready to freeze. */
 export function buildZReport(input: ShiftReportInput, closing: ZClosing): ShiftReport {
   const report = buildXReport(input);
+  if (denominationsTotal(closing.denominations) !== closing.countedCash) {
+    throw new RangeError("buildZReport: countedCash does not match the denominations");
+  }
   const variance = cashVariance(closing.countedCash, report.cash.expected);
   return {
     ...report,

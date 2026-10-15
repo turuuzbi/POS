@@ -12,7 +12,7 @@ import {
 } from "./checkout-contract";
 import { MAX_VOID_NOTE_LENGTH, VOID_REASONS, type VoidIssue } from "./void";
 
-export const voidInputSchema = z.object({
+export const voidInputSchema = z.strictObject({
   /** The sale to void. At most one void exists per sale, so this is the idempotency key. */
   saleId: uuidV7,
   reason: z.enum(VOID_REASONS),

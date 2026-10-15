@@ -145,3 +145,13 @@ describe("results", () => {
     expect(cashMovementResultSchema.parse(JSON.parse(JSON.stringify(toWire(mv))))).toEqual(mv);
   });
 });
+
+describe("strict inputs and opening float", () => {
+  it("rejects unknown keys and sub-note floats", () => {
+    expect(openShiftInputSchema.safeParse({ openingFloat: "1000", registerId: "x" }).success).toBe(
+      false,
+    );
+    expect(openShiftInputSchema.safeParse({ openingFloat: "1" }).success).toBe(false);
+    expect(openShiftInputSchema.safeParse({ openingFloat: "1000" }).success).toBe(true);
+  });
+});

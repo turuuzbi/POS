@@ -19,6 +19,7 @@ import {
   CASH_MOVEMENT_TYPES,
   MAX_CLOSING_NOTE_LENGTH,
   MAX_REASON_LENGTH,
+  MIN_CASH_UNIT,
   MNT_DENOMINATIONS,
   type CashMovementIssueCode,
   type ShiftIssue,
@@ -28,24 +29,26 @@ import {
 // Inputs
 // ---------------------------------------------------------------------------
 
-export const openShiftInputSchema = z.object({
-  openingFloat: moneyWire,
+export const openShiftInputSchema = z.strictObject({
+  openingFloat: moneyWire
+    .refine((v) => v >= 0n, "must not be negative")
+    .refine((v) => v % MIN_CASH_UNIT === 0n, "must be a multiple of the smallest denomination"),
 });
 export type OpenShiftInput = z.output<typeof openShiftInputSchema>;
 
-/** Counts keyed by denomination in ₮; unknown keys and bad counts are rejected by `parseDenominations`. */
+/** Counts keyed by denomination in ₮; bad keys are rejected here and bad counts by `parseDenominations`. */
 const denominationsWire = z
   .record(z.string().max(8), z.number().int().nonnegative().safe())
   .refine((r) => Object.keys(r).length <= MNT_DENOMINATIONS.length, "too many denominations");
 
-export const closeShiftInputSchema = z.object({
+export const closeShiftInputSchema = z.strictObject({
   shiftId: uuid,
   denominations: denominationsWire,
   note: optionalText(MAX_CLOSING_NOTE_LENGTH),
 });
 export type CloseShiftInput = z.output<typeof closeShiftInputSchema>;
 
-export const cashMovementInputSchema = z.object({
+export const cashMovementInputSchema = z.strictObject({
   /** Client-generated UUIDv7: the idempotency key (and CashMovement.id). */
   movementId: uuidV7,
   type: z.enum(CASH_MOVEMENT_TYPES),
