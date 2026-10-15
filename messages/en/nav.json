@@ -20,6 +20,8 @@
     "catalog": "Catalog",
     "inventory": "Inventory",
     "purchasing": "Purchasing",
-    "settings": "Settings"
-  }
+    "settings": "Settings",
+    "sales": "Sales"
+  },
+  "salesHistory": "Sales history"
 }

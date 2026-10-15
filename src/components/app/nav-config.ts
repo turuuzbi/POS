@@ -14,6 +14,10 @@ export const NAV_SECTIONS = [
     ],
   },
   {
+    key: "sales",
+    items: [{ key: "salesHistory", href: "/sales", permission: "reports.view" }],
+  },
+  {
     key: "catalog",
     items: [
       { key: "products", href: "/catalog/products", permission: "catalog.view" },

@@ -61,5 +61,59 @@
   },
   "pdf": {
     "title": "Баримт {number}"
+  },
+  "refundedBanner": "БУЦААСАН",
+  "partiallyRefundedBanner": "ХЭСГИЙН БУЦААЛТТАЙ",
+  "refundedLine": "Буцаалт {number}",
+  "refund": {
+    "title": "ХЭРЭГЛЭГЧИЙН БУЦААЛТ",
+    "pageTitle": "Буцаалтын баримт",
+    "publicTitle": "Буцаалтын баримт",
+    "refundNo": "Буцаалт №",
+    "originalReceiptNo": "Анхны баримт №",
+    "exchangeSaleNo": "Солилтын баримт №",
+    "reason": "Шалтгаан",
+    "processedBy": "Буцаасан кассчин",
+    "approvedBy": "Зөвшөөрсөн",
+    "refundedItems": "Буцаасан барааны дүн",
+    "refundedTotal": "Буцаасан нийт дүн",
+    "taxReversal": "Татварын буцаалт",
+    "payoutsHeading": "Буцаан олгосон",
+    "cashReturned": "Бэлнээр буцаасан",
+    "exchangeCredit": "Солилтод шилжүүлсэн",
+    "fiscalPending": "И-баримтын буцаалт бүртгэгдэж байна",
+    "fiscalFailed": "И-баримтын буцаалт бүртгэгдээгүй",
+    "fiscalCancelled": "И-баримтын буцаалт цуцлагдсан",
+    "fiscalIssued": "И-баримтын буцаалт бүртгэгдсэн",
+    "reasons": {
+      "DEFECTIVE": "Гэмтэлтэй бүтээгдэхүүн",
+      "DAMAGED": "Эвдэрсэн",
+      "WRONG_ITEM": "Буруу бараа",
+      "NOT_AS_DESCRIBED": "Тайлбартай таарахгүй",
+      "CHANGED_MIND": "Санаа өөрчилсөн",
+      "OTHER": "Бусад"
+    },
+    "pdfTitle": "Буцаалт {number}"
+  },
+  "voidSlip": {
+    "title": "ХҮЧИНГҮЙ БОЛГОСОН БАРИМТ",
+    "pageTitle": "Хүчингүй болгосон баримт",
+    "publicTitle": "Хүчингүй болгосон баримт",
+    "saleDate": "Борлуулсан огноо",
+    "voidDate": "Хүчингүй болгосон",
+    "voidedBy": "Хүчингүй болгосон",
+    "voidedTotal": "Хүчингүй болгосон дүн",
+    "reversalsHeading": "Буцаасан төлбөр",
+    "reasons": {
+      "ENTRY_ERROR": "Оруулалтын алдаа",
+      "CUSTOMER_CANCELLED": "Худалдан авагч цуцалсан",
+      "PAYMENT_PROBLEM": "Төлбөрийн асуудал",
+      "OTHER": "Бусад"
+    },
+    "pdfTitle": "Хүчингүй баримт {number}"
+  },
+  "creditNote": {
+    "backToSale": "Борлуулалт руу буцах",
+    "originalReceipt": "Анхны баримт"
   }
 }

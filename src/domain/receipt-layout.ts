@@ -53,6 +53,9 @@ export interface ReceiptLabels {
   tendered: string;
   change: string;
   voided: string;
+  refundedBanner: string;
+  partiallyRefundedBanner: string;
+  refundedLine: (number: string) => string;
   lottery: string;
   fiscalPending: string;
   fiscalFailed: string;
@@ -87,6 +90,9 @@ export function makeReceiptLabels(t: Translate): ReceiptLabels {
     tendered: t("tendered"),
     change: t("change"),
     voided: t("voided"),
+    refundedBanner: t("refundedBanner"),
+    partiallyRefundedBanner: t("partiallyRefundedBanner"),
+    refundedLine: (number) => t("refundedLine", { number }),
     lottery: t("lottery"),
     fiscalPending: t("fiscalPending"),
     fiscalFailed: t("fiscalFailed"),
@@ -110,18 +116,12 @@ function taxLabel(row: ReceiptTaxRow, labels: ReceiptLabels, locale: string): st
   return labels.vatRate(formatRateBps(row.vatRateBps, locale));
 }
 
-export function buildReceiptRows(
-  model: ReceiptModel,
+/** Business + location block shared by every slip. */
+export function buildHeaderRows(
+  header: ReceiptModel["header"],
   labels: ReceiptLabels,
-  { locale }: { locale: string },
 ): ReceiptRow[] {
   const rows: ReceiptRow[] = [];
-  const plain = (amount: bigint) => formatMoney(amount, { locale, symbol: false });
-  const money = (amount: bigint) => formatMoney(amount, { locale });
-  const signed = (amount: bigint) => (amount > 0n ? `+${money(amount)}` : money(amount));
-  const { header } = model;
-
-  // Header
   if (header.businessName) {
     rows.push({ kind: "text", text: header.businessName, align: "center", bold: true, size: "lg" });
   }
@@ -154,9 +154,31 @@ export function buildReceiptRows(
   for (const text of header.text) {
     rows.push({ kind: "text", text, align: "center", size: "sm" });
   }
+  return rows;
+}
+
+export function buildReceiptRows(
+  model: ReceiptModel,
+  labels: ReceiptLabels,
+  { locale }: { locale: string },
+): ReceiptRow[] {
+  const rows: ReceiptRow[] = [];
+  const plain = (amount: bigint) => formatMoney(amount, { locale, symbol: false });
+  const money = (amount: bigint) => formatMoney(amount, { locale });
+  const signed = (amount: bigint) => (amount > 0n ? `+${money(amount)}` : money(amount));
+
+  rows.push(...buildHeaderRows(model.header, labels));
 
   if (model.voided) {
     rows.push({ kind: "gap" }, { kind: "banner", text: labels.voided });
+  } else if (model.refundState !== "NONE") {
+    rows.push(
+      { kind: "gap" },
+      {
+        kind: "banner",
+        text: model.refundState === "FULL" ? labels.refundedBanner : labels.partiallyRefundedBanner,
+      },
+    );
   }
 
   // Meta
@@ -270,6 +292,19 @@ export function buildReceiptRows(
         left: labels.change,
         right: money(model.changeTotal),
         bold: true,
+      });
+    }
+  }
+
+  // Refunds recorded against this sale.
+  if (model.refunds.length > 0) {
+    rows.push({ kind: "rule", style: "dashed" });
+    for (const refund of model.refunds) {
+      rows.push({
+        kind: "pair",
+        left: `${labels.refundedLine(refund.number)} ${refund.date}`,
+        right: `-${money(refund.total)}`,
+        size: "sm",
       });
     }
   }
