@@ -16,6 +16,10 @@ import products from "./products.json";
 import quickKeys from "./quickKeys.json";
 import purchasing from "./purchasing.json";
 import receipt from "./receipt.json";
+import refundErrors from "./refundErrors.json";
+import refunds from "./refunds.json";
+import sales from "./sales.json";
+import shifts from "./shifts.json";
 import roles from "./roles.json";
 import states from "./states.json";
 import stocktakes from "./stocktakes.json";
@@ -43,6 +47,10 @@ const messages = {
   quickKeys,
   purchasing,
   receipt,
+  refundErrors,
+  refunds,
+  sales,
+  shifts,
   roles,
   states,
   stocktakes,
