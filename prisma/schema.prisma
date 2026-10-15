@@ -252,6 +252,10 @@ model BusinessSettings {
   /// src/domain/scale-barcode.ts. null = built-in default rules.
   scaleBarcodeRules Json?
 
+  /// Refunds of sales older than this many whole days need a manager approval
+  /// (domain/refund.ts policy.maxRefundWindowDays). null = no limit.
+  refundWindowDays Int?
+
   tipsEnabled   Boolean @default(false)
   tipPresetsBps Int[]   @default([500, 1000, 1500])
 
@@ -1247,6 +1251,11 @@ model SaleVoid {
   note         String?
   voidedById   String     @db.Uuid
   approvedById String?    @db.Uuid
+  /// SHA-256 of the void content (domain/void-contract.ts voidFingerprint): a
+  /// replay with other content is IDEMPOTENCY_CONFLICT.
+  fingerprint  String?
+  /// What was reversed per tender: [{paymentId, method, kind, amount, reference}].
+  reversals    Json?
   createdAt    DateTime   @default(now())
 
   sale       Sale  @relation(fields: [saleId], references: [id])
@@ -1289,6 +1298,9 @@ model Refund {
   roundingAmount BigInt       @default(0) /// signed; refunds round like sales
   totalAmount    BigInt /// net + vat + cityTax + tip + rounding
   exchangeSaleId String?      @unique @db.Uuid /// replacement sale when this is an exchange
+  /// SHA-256 of the refund content (domain/refund-contract.ts refundFingerprint).
+  /// A replay of the same id with other content is IDEMPOTENCY_CONFLICT.
+  fingerprint    String?
   occurredAt     DateTime
   createdAt      DateTime     @default(now())
 
@@ -1317,14 +1329,15 @@ model Refund {
 /// Σ RefundLine.qtyMilli per SaleLine ≤ SaleLine.qtyMilli (enforced in the
 /// refund service under a lock on the original sale).
 model RefundLine {
-  id            String  @id @default(uuid(7)) @db.Uuid
-  refundId      String  @db.Uuid
-  saleLineId    String  @db.Uuid
+  id            String        @id @default(uuid(7)) @db.Uuid
+  refundId      String        @db.Uuid
+  saleLineId    String        @db.Uuid
   qtyMilli      Int
   restock       Boolean
+  reason        ReturnReason? /// per-line reason when it differs from the refund's
   netAmount     BigInt /// pro-rata of the original line (incl. its discount share)
   vatAmount     BigInt
-  cityTaxAmount BigInt  @default(0)
+  cityTaxAmount BigInt        @default(0)
   totalAmount   BigInt
   unitCost      BigInt
 

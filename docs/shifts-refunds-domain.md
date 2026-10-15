@@ -48,3 +48,14 @@ Inputs carry a client UUIDv7 (`refundId`, `movementId`; a void is keyed by `sale
 - Tips are returned only by the refund that completes the sale.
 - COGS reversal of a weighed partial restock rounds once per refund (≤ 0.5 möngö per refund), unlike money, which is exact.
 - The exchange flow (refund + replacement checkout in one transaction, `exchange.saleId` link) is a service concern; the contract only carries the reference and expected payable.
+
+## Service layer (refund / void / exchange)
+
+`src/server/services/{refunds,voids,post-refund,approval-check}.ts`, actions `refundAction` / `voidSaleAction`.
+
+- **Voided** = a `SaleVoid` row exists (append-only). `SaleVoid.reversals` records the reversal per tender; a QPay payment is refunded through the provider and its `PaymentIntent` goes `REFUNDED`. Fiscal: a never-issued receipt becomes `CANCELLED`, an issued one is returned (`runVoidFiscal`, after commit).
+- **Refund** = `planRefund` on the state read under `SELECT ... FOR UPDATE` of the original sale (voids take the same lock), keyed by `refundId` (advisory lock + stored `Refund.fingerprint`). Booked on the register's current open shift. Restock = `RETURN_RESTOCK` at the sale's `unitCost`; receipt number `<location>-R-000001` from `Sequence refund:<location>`. Approvals are resolved by the scopes of `refundApprovalRequirements`; the missing ones are listed in the error details (`required: [{key, scope, value}]`).
+- **Exchange**: the action takes `exchangeCheckout` (the replacement sale's ordinary checkout input; tenders = net due only). The checkout core runs in the refund transaction (`checkoutInTransaction`), adds the `EXCHANGE_CREDIT` payment (reference = refund id) and its stock guard waits until the returned goods are restocked.
+- **Errors** travel as `fieldErrors.refund|void|shift = [CODE]` (+ `.details` JSON); read with `refundCodeFromFailure` etc. (`domain/refund-failure.ts`). Messages: namespace `refundErrors`, keys `refund.errors.*`, `void.errors.*`, `shift.errors.*`.
+- `BusinessSettings.refundWindowDays` (null = no limit) feeds the window policy.
+- Known limits: a provider refund succeeds before the commit (a crash in between needs manual reconciliation; the provider call carries an idempotency key); `completesSale` of a replayed refund is exact only when refunds were not concurrent.
