@@ -1,6 +1,6 @@
 "use client";
 
-import { ShoppingCart, WifiOff } from "lucide-react";
+import { ShoppingCart, Undo2, WifiOff } from "lucide-react";
 import type * as React from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
@@ -20,7 +20,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { computeTotals, type Cart } from "@/domain/cart";
-import type { CheckoutResult } from "@/domain/checkout-contract";
+import type { CheckoutInputWire, CheckoutResult } from "@/domain/checkout-contract";
 import { DEFAULT_APPROVAL_POLICY, type ApprovalRequirement } from "@/domain/discounts";
 import { hasPermission, type Role } from "@/domain/permissions";
 import { isFractionalUnit, MILLI_PER_UNIT } from "@/domain/qty";
@@ -30,7 +30,7 @@ import { useBarcodeWedge } from "@/hooks/use-barcode-wedge";
 import { useOnline } from "@/hooks/use-online";
 import { usePosStore } from "@/hooks/use-pos-store";
 import { snapshotOf, type CatalogEntry } from "@/lib/pos/catalog-entry";
-import { buildCheckoutInput } from "@/lib/pos/charge";
+import { buildCheckoutInput, type TenderDraft } from "@/lib/pos/charge";
 import { storageScope, type HeldCart } from "@/lib/pos/hold-storage";
 import { createShortcutGuard } from "@/lib/pos/scan-burst";
 import {
@@ -41,6 +41,10 @@ import {
   pendingApprovals,
   type PosConfig,
 } from "@/lib/pos/pos-state";
+import { ExchangeBar } from "@/components/refunds/exchange-bar";
+import { ExchangeFinish } from "@/components/refunds/exchange-finish";
+import { ReturnsDialog } from "@/components/refunds/returns-dialog";
+import { useExchange } from "@/components/refunds/use-exchange";
 import { checkoutAction } from "@/server/actions/checkout";
 import { lookupCodeAction, refreshEntriesAction } from "@/server/actions/register";
 import type { RegisterContext } from "@/server/queries/register";
@@ -67,6 +71,8 @@ type DialogState =
   | { type: "note"; lineId: string }
   | { type: "approval"; thenCharge: boolean }
   | { type: "tender" }
+  | { type: "returns" }
+  | { type: "exchange" }
   | { type: "held" }
   | { type: "camera" }
   | { type: "variants"; title: string; entries: CatalogEntry[] }
@@ -176,6 +182,7 @@ function Selling({
   onShiftLost: () => void;
 }) {
   const t = useTranslations("pos");
+  const tr = useTranslations("refunds");
   const format = useFormat();
   const config: PosConfig = useMemo(
     () => ({
@@ -215,6 +222,8 @@ function Selling({
       return computeTotals({ lines: [], discounts: [] }, { variants: {} }, cartSettings(config));
     }
   }, [state.cart, state.entries, config]);
+
+  const exchange = useExchange(storageScope(registerId, user.id), user.role, totals.payable);
 
   const pending = useMemo(
     () => pendingApprovals(state, config, user.role, now),
@@ -328,8 +337,21 @@ function Selling({
   const lineOf = (lineId: string) => state.cart.lines.find((l) => l.lineId === lineId);
 
   const { reconcilePayment } = store;
+  const exchangeContext = exchange.context;
   const startCharge = useCallback(() => {
     if (!online || store.conflict) return;
+    if (exchangeContext) {
+      // An exchange finishes through its own flow: credit, net due, then the linked refund.
+      if (exchangeContext.checkedOut || locked) {
+        setDialog({ type: "exchange" });
+        return;
+      }
+      if (state.cart.lines.every((l) => l.voided)) return;
+      reconcilePayment(totals.payable);
+      if (pending.length > 0) setDialog({ type: "approval", thenCharge: true });
+      else setDialog({ type: "exchange" });
+      return;
+    }
     if (locked) {
       setDialog({ type: "tender" });
       return;
@@ -340,6 +362,7 @@ function Selling({
     if (pending.length > 0) setDialog({ type: "approval", thenCharge: true });
     else setDialog({ type: "tender" });
   }, [
+    exchangeContext,
     locked,
     online,
     pending.length,
@@ -352,11 +375,19 @@ function Selling({
   const openHeld = useCallback(() => {
     // Resuming parks this cart, which would lose the unconfirmed charge / payment.
     if (guardLocked()) return;
+    if (exchangeContext) {
+      toast.error(tr("exchange.noHold"));
+      return;
+    }
     setDialog({ type: "held" });
-  }, [guardLocked]);
+  }, [exchangeContext, guardLocked, tr]);
 
   const hold = useCallback(() => {
     if (guardLocked()) return;
+    if (exchangeContext) {
+      toast.error(tr("exchange.noHold"));
+      return;
+    }
     const result = store.holdCurrent();
     if (result === "LOCKED") {
       toast.error(t("pending.locked"));
@@ -367,7 +398,7 @@ function Selling({
     } else if (result === "FULL") {
       toast.error(t("held.full"));
     }
-  }, [focusSearch, guardLocked, store, t]);
+  }, [exchangeContext, focusSearch, guardLocked, store, t, tr]);
 
   const handlers: CartHandlers = {
     onStep: (lineId, delta) => {
@@ -457,6 +488,10 @@ function Selling({
           event.preventDefault();
           if (!locked) setDialog({ type: "discount", lineId: null });
           break;
+        case "F9":
+          event.preventDefault();
+          setDialog({ type: "returns" });
+          break;
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -531,6 +566,17 @@ function Selling({
       approvals: approvalTokens(state, config),
     });
 
+  /** The replacement sale of an exchange: net-due tenders plus the credit as its own tender. */
+  const buildExchangeInput = (tenders: readonly TenderDraft[], credit: bigint) => {
+    const wire = buildInput(tenders);
+    return credit > 0n
+      ? ({
+          ...wire,
+          tenders: [...wire.tenders, { method: "EXCHANGE_CREDIT", amount: credit.toString() }],
+        } as unknown as CheckoutInputWire)
+      : wire;
+  };
+
   const activeLine =
     dialog && "lineId" in dialog && dialog.lineId ? lineOf(dialog.lineId) : undefined;
   const activeEntry = activeLine ? state.entries[activeLine.variantId] : undefined;
@@ -550,6 +596,16 @@ function Selling({
                 <WifiOff aria-hidden /> {t("offline.badge")}
               </Badge>
             ) : null}
+            <Button
+              variant="outline"
+              aria-keyshortcuts="F9"
+              onClick={() => setDialog({ type: "returns" })}
+              data-testid="open-returns"
+            >
+              <Undo2 aria-hidden />
+              <span className="hidden md:inline">{tr("open")}</span>
+              <span className="sr-only md:hidden">{tr("open")}</span>
+            </Button>
             <HelpPopover open={helpOpen} onOpenChange={setHelpOpen} />
           </>
         }
@@ -569,6 +625,19 @@ function Selling({
             {store.pendingCharge ? t("pending.retry") : t("pending.paymentResume")}
           </Button>
         </div>
+      ) : null}
+
+      {exchange.context ? (
+        <ExchangeBar
+          exchange={exchange}
+          itemCount={itemCount}
+          disabled={!online || locked}
+          onFinish={startCharge}
+          onCancel={() => {
+            exchange.clear();
+            toast.success(tr("exchange.cancelled"));
+          }}
+        />
       ) : null}
 
       <main
@@ -745,13 +814,73 @@ function Selling({
           onGranted={(grants, complete) => {
             dispatch({ type: "approve", grants });
             if (!complete) return;
-            if (dialog.thenCharge) setDialog({ type: "tender" });
+            if (dialog.thenCharge) setDialog({ type: exchangeContext ? "exchange" : "tender" });
             else closeDialog();
           }}
         />
       ) : null}
 
-      {dialog?.type === "tender" && !store.conflict ? (
+      {dialog?.type === "returns" ? (
+        <ReturnsDialog
+          onClose={closeDialog}
+          role={user.role}
+          currentShiftId={context.shift?.id ?? null}
+          onStartExchange={(next, sale, meta) => {
+            if (exchange.context) {
+              toast.error(tr("exchange.alreadyOpen"));
+              return;
+            }
+            exchange.begin(next, sale, meta);
+            closeDialog();
+            toast.success(tr("exchange.started"));
+          }}
+        />
+      ) : null}
+
+      {(dialog?.type === "exchange" || dialog?.type === "tender") &&
+      exchange.context &&
+      !store.conflict ? (
+        <ExchangeFinish
+          exchange={exchange}
+          cashUnit={cashUnitForRounding(config.totalRoundingUnit)}
+          replacementSaleId={state.saleId}
+          buildCheckout={buildExchangeInput}
+          store={store}
+          startAtTender={dialog.type === "tender" || locked}
+          onCheckedOut={(saleId, payable) => {
+            if (exchange.context)
+              exchange.update({ ...exchange.context, checkedOut: { saleId, payable } });
+            store.newSale();
+            setCartOpen(false);
+          }}
+          onProblem={async (kind) => {
+            setDialog(null);
+            if (kind === "DUPLICATE_SALE") {
+              store.newSale();
+              setCartOpen(false);
+              setDialog({ type: "duplicate" });
+            } else if (kind === "STALE_PRICE") {
+              await refreshPrices();
+              toast.warning(t("pending.pricesUpdated"));
+            } else if (kind === "APPROVAL") {
+              dispatch({ type: "dropApprovals" });
+              toast.warning(t("pending.approvalExpired"));
+              setDialog({ type: "approval", thenCharge: true });
+            } else {
+              toast.error(t("pending.shiftClosed"));
+              onShiftLost();
+            }
+          }}
+          onClose={closeDialog}
+          onFinished={() => {
+            exchange.clear();
+            setDialog(null);
+            focusSearch();
+          }}
+        />
+      ) : null}
+
+      {dialog?.type === "tender" && !store.conflict && !exchange.context ? (
         <TenderDialog
           open
           onClose={closeDialog}

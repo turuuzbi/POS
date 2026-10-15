@@ -40,7 +40,7 @@ function DialogContent({
         {children}
         {closeLabel ? (
           <DialogPrimitive.Close
-            className="absolute top-3 right-3 inline-flex size-9 items-center justify-center rounded-md opacity-70 transition-opacity outline-none hover:opacity-100 focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            className="absolute top-2 right-2 inline-flex size-11 items-center justify-center rounded-md opacity-70 transition-opacity outline-none hover:opacity-100 focus-visible:ring-[3px] focus-visible:ring-ring/50"
             aria-label={closeLabel}
           >
             <XIcon className="size-4" aria-hidden />
