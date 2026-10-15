@@ -38,10 +38,14 @@ import type {
 
 const globalForMock = globalThis as unknown as {
   mockQpayPaid?: Map<string, { paidAt: Date }>;
-  mockQpayRefunded?: Set<string>;
+  /** providerRef → cumulative refunded möngö. */
+  mockQpayRefunded?: Map<string, bigint>;
+  /** idempotency key → the refund it produced. */
+  mockQpayRefundKeys?: Map<string, ProviderRefund>;
 };
 const paid = (globalForMock.mockQpayPaid ??= new Map());
-const refunded = (globalForMock.mockQpayRefunded ??= new Set());
+const refunded = (globalForMock.mockQpayRefunded ??= new Map());
+const refundKeys = (globalForMock.mockQpayRefundKeys ??= new Map());
 
 const REF = /^mock_(\d{1,15})_(\d{10,15})_([a-f0-9]{8})$/;
 
@@ -69,6 +73,12 @@ function autoPaySeconds(): number | null {
 }
 
 export function createMockQpayProvider(now: () => Date = () => new Date()): PaymentProvider {
+  /** Marked paid, or past the auto-pay delay (stateless, works across instances). */
+  const isPaid = async (providerRef: string, createdMs: number): Promise<boolean> => {
+    if (paid.has(providerRef)) return true;
+    const auto = autoPaySeconds();
+    return auto !== null && now().getTime() >= createdMs + auto * 1000;
+  };
   return {
     name: "mock",
 
@@ -97,7 +107,7 @@ export function createMockQpayProvider(now: () => Date = () => new Date()): Paym
       if (!marked && auto !== null && current.getTime() >= parsed.createdMs + auto * 1000) {
         marked = new Date(parsed.createdMs + auto * 1000);
       }
-      if (refunded.has(providerRef)) {
+      if ((refunded.get(providerRef) ?? 0n) >= parsed.amount) {
         return { status: "CANCELLED", raw: { mock: true, refunded: true } };
       }
       if (!marked) return { status: "PENDING", raw: { mock: true } };
@@ -111,16 +121,26 @@ export function createMockQpayProvider(now: () => Date = () => new Date()): Paym
     },
 
     async refund(input: RefundInput): Promise<ProviderRefund> {
+      const keyed = input.idempotencyKey ? refundKeys.get(input.idempotencyKey) : undefined;
+      if (keyed) return keyed; // a retried refund returns the first answer
       const parsed = parseMockRef(input.providerRef);
-      if (!parsed || !paid.has(input.providerRef) || input.amount > parsed.amount) {
+      const already = refunded.get(input.providerRef) ?? 0n;
+      if (
+        !parsed ||
+        input.amount <= 0n ||
+        !(await isPaid(input.providerRef, parsed.createdMs)) ||
+        already + input.amount > parsed.amount
+      ) {
         return { status: "FAILED", raw: { mock: true } };
       }
-      refunded.add(input.providerRef);
-      return {
+      refunded.set(input.providerRef, already + input.amount);
+      const result: ProviderRefund = {
         status: "REFUNDED",
-        refundRef: `mockrefund_${input.providerRef.slice(-8)}`,
+        refundRef: `mockrefund_${input.providerRef.slice(-8)}_${(already + input.amount).toString()}`,
         raw: { mock: true, amount: input.amount.toString() },
       };
+      if (input.idempotencyKey) refundKeys.set(input.idempotencyKey, result);
+      return result;
     },
   };
 }

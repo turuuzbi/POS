@@ -40,6 +40,8 @@ export interface RefundInput {
   providerRef: string;
   amount: bigint;
   reason?: string;
+  /** Retries with the same key must not refund twice (our refund id + payment id). */
+  idempotencyKey?: string;
 }
 
 export interface ProviderRefund {

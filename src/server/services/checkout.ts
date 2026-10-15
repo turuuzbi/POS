@@ -222,11 +222,42 @@ type LoadedVariant = Prisma.ProductVariantGetPayload<{
   include: { product: { include: { taxClass: true } } };
 }>;
 
+/**
+ * Value carried from a refund into the sale this checkout creates (exchange).
+ * Only the refund service passes it, inside its own transaction: it becomes an
+ * EXCHANGE_CREDIT payment row, and the client's tenders cover the rest.
+ */
+export interface ExchangeCredit {
+  refundId: string;
+  amount: bigint;
+  /**
+   * Skip the INSUFFICIENT_STOCK guard of this sale: the refund restocks the
+   * returned goods afterwards and then re-checks the balances itself.
+   */
+  deferStockGuard?: boolean;
+}
+
+/**
+ * The checkout transaction body, for callers that already hold a transaction
+ * (the exchange flow of the refund service). Same rules and lock order as
+ * `checkoutSale`; the caller owns QPay confirmation (before its transaction)
+ * and the post-commit work (fiscal receipt).
+ */
+export function checkoutInTransaction(
+  tx: Tx,
+  input: CheckoutInput,
+  ctx: CheckoutContext,
+  exchangeCredit?: ExchangeCredit,
+): Promise<CheckoutResult> {
+  return runCheckout(tx, input, checkoutFingerprint(input), ctx, exchangeCredit);
+}
+
 async function runCheckout(
   tx: Tx,
   input: CheckoutInput,
   fingerprint: string,
   ctx: CheckoutContext,
+  exchangeCredit?: ExchangeCredit,
 ): Promise<CheckoutResult> {
   const { user, device } = ctx;
   const now = ctx.now ?? new Date();
@@ -368,7 +399,11 @@ async function runCheckout(
     }
     seenRefs.add(key);
   }
-  const validated = validateTenders(totals.payable, tenders, {
+  const credit = exchangeCredit?.amount ?? 0n;
+  if (credit < 0n || credit > totals.payable) {
+    throw new CheckoutFailure("INTERNAL", { reason: "exchange credit out of range" });
+  }
+  const validated = validateTenders(totals.payable - credit, tenders, {
     cashUnit: cashUnitForRounding(settings.totalRoundingUnit),
   });
   if (!validated.ok) {
@@ -512,6 +547,17 @@ async function runCheckout(
       paymentIntentId: stored?.id ?? null,
     };
   });
+  if (exchangeCredit && credit > 0n) {
+    paymentRows.push({
+      id: uuidv7(),
+      saleId: input.saleId,
+      method: "EXCHANGE_CREDIT",
+      amount: credit,
+      tendered: null,
+      change: 0n,
+      reference: exchangeCredit.refundId,
+    });
+  }
   if (paymentRows.length > 0) await tx.salePayment.createMany({ data: paymentRows });
 
   // 9. Stock (the only way stock changes).
@@ -523,7 +569,7 @@ async function runCheckout(
         createdById: user.id,
         note: number,
         refs: { saleId: input.saleId },
-        forbidNegative: !settings.allowNegativeStock,
+        forbidNegative: !settings.allowNegativeStock && !exchangeCredit?.deferStockGuard,
         lines: stockLines,
       });
     } catch (error) {

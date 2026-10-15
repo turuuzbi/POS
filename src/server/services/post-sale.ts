@@ -75,10 +75,31 @@ export async function retryFiscalReceipt(
 ): Promise<string> {
   const receipt = await db.fiscalReceipt.findUnique({
     where: { id: fiscalReceiptId },
-    include: { sale: { include: { lines: { orderBy: { lineNo: "asc" } }, payments: true } } },
+    include: {
+      sale: {
+        include: {
+          lines: { orderBy: { lineNo: "asc" } },
+          payments: true,
+          void: { select: { id: true } },
+        },
+      },
+    },
   });
   if (!receipt || !receipt.sale) throw new ActionError("NOT_FOUND");
   if (receipt.status === "ISSUED" || receipt.status === "CANCELLED") return receipt.status;
+  if (receipt.sale.void) {
+    // A voided sale is never reported. An already issued document is reversed by
+    // runVoidFiscal (post-refund.ts); one that never went out is simply cancelled.
+    const done = await db.fiscalReceipt.updateMany({
+      where: {
+        id: receipt.id,
+        externalId: null,
+        OR: [{ status: { in: ["PENDING", "FAILED"] } }, staleClaim(new Date())],
+      },
+      data: { status: "CANCELLED", claimedAt: null },
+    });
+    return done.count === 1 ? "CANCELLED" : receipt.status;
+  }
 
   const claimedAt = now;
   const claim = await db.fiscalReceipt.updateMany({

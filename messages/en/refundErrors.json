@@ -1,1 +1,75 @@
-{}
+{
+  "refund": {
+    "errors": {
+      "INVALID_INPUT": "The return details are invalid. Check them and try again.",
+      "PERMISSION_DENIED": "You are not allowed to process returns.",
+      "APPROVAL_REQUIRED": "This return needs a manager's approval.",
+      "APPROVAL_INVALID": "The manager approval is invalid or expired. Ask for it again.",
+      "SHIFT_NOT_OPEN": "No shift is open. Open a shift before processing a return.",
+      "SALE_NOT_FOUND": "The sale was not found.",
+      "SALE_NOT_COMPLETED": "This sale was voided, so it cannot be returned.",
+      "NO_LINES": "Select the items to return.",
+      "TOO_MANY_LINES": "Too many lines in one return.",
+      "DUPLICATE_LINE": "An item was selected twice.",
+      "UNKNOWN_LINE": "The selected item is not part of this sale.",
+      "INVALID_QUANTITY": "The return quantity is invalid. Pieces must be returned in whole units.",
+      "ALREADY_REFUNDED": "This item has already been returned in full.",
+      "OVER_REFUND": "The quantity or amount exceeds what is left to return.",
+      "REASON_NOTE_REQUIRED": "A note is required when the reason is \"Other\".",
+      "NOT_SUPPORTED": "Returning gift cards or store credit is not available yet.",
+      "REFUND_METHOD_NOT_ALLOWED": "The money cannot be returned this way. Card and QPay can only be returned to the original method.",
+      "PAYMENT_MISMATCH": "The refund payments do not add up to the refund total.",
+      "CASH_NOT_IN_UNITS": "The cash amount must be a multiple of the smallest cash unit.",
+      "ALLOCATION_FAILED": "The refund cannot be split across the original payment methods. Ask a manager.",
+      "REFUND_WINDOW_EXCEEDED": "The return window has passed. A manager's approval is required.",
+      "EXCHANGE_INVALID": "The exchange is invalid. Check the replacement items.",
+      "EXCHANGE_MISMATCH": "The replacement sale total does not match. Refresh the cart.",
+      "TOTAL_MISMATCH": "The refund total has changed. Review it and continue.",
+      "PAYMENT_PROVIDER_FAILED": "The payment provider could not return the money. Nothing was refunded. Try again.",
+      "IDEMPOTENCY_CONFLICT": "This return was already recorded with different content. Start a new one.",
+      "CONCURRENT_DUPLICATE": "Another request is processing this return. Wait a moment and check.",
+      "INTERNAL": "Something went wrong while processing the return. Try again."
+    }
+  },
+  "void": {
+    "errors": {
+      "INVALID_INPUT": "The void details are invalid.",
+      "PERMISSION_DENIED": "You are not allowed to void sales.",
+      "APPROVAL_REQUIRED": "Voiding a sale needs a manager's approval.",
+      "APPROVAL_INVALID": "The manager approval is invalid or expired. Ask for it again.",
+      "SALE_NOT_FOUND": "The sale was not found.",
+      "SHIFT_NOT_OPEN": "No shift is open. A sale can only be voided in an open shift.",
+      "VOID_NOT_ALLOWED": "This sale cannot be voided. The payment provider may have refused.",
+      "ALREADY_VOIDED": "This sale has already been voided.",
+      "ALREADY_REFUNDED": "A sale with returns cannot be voided.",
+      "SALE_IN_OTHER_SHIFT": "A sale from another shift cannot be voided. Process a return instead.",
+      "REASON_NOTE_REQUIRED": "A note is required when the reason is \"Other\".",
+      "NOTE_TOO_LONG": "The note is too long.",
+      "NOT_SUPPORTED": "Voiding sales paid with gift cards or store credit is not available yet.",
+      "IDEMPOTENCY_CONFLICT": "This sale was already voided with different details.",
+      "INTERNAL": "Something went wrong while voiding. Try again."
+    }
+  },
+  "shift": {
+    "errors": {
+      "INVALID_INPUT": "The shift details are invalid.",
+      "PERMISSION_DENIED": "You are not allowed to do this.",
+      "APPROVAL_REQUIRED": "This action needs a manager's approval.",
+      "APPROVAL_INVALID": "The manager approval is invalid or expired. Ask for it again.",
+      "SHIFT_NOT_FOUND": "The shift was not found.",
+      "SHIFT_NOT_OPEN": "No shift is open.",
+      "SHIFT_ALREADY_OPEN": "A shift is already open on this register.",
+      "DENOMINATIONS_INVALID": "The denomination counts are invalid. Check and enter them again.",
+      "VARIANCE_NOTE_REQUIRED": "The cash variance is large. Add a note.",
+      "NOTE_TOO_LONG": "The note is too long.",
+      "AMOUNT_NOT_POSITIVE": "The amount must be greater than zero.",
+      "AMOUNT_TOO_LARGE": "The amount is too large.",
+      "AMOUNT_NOT_IN_UNITS": "The amount must be a multiple of the smallest denomination.",
+      "REASON_REQUIRED": "Enter a reason.",
+      "REASON_TOO_LONG": "The reason is too long.",
+      "PAYOUT_EXCEEDS_CASH": "The pay-out is more than the cash in the drawer. A manager's approval is required.",
+      "IDEMPOTENCY_CONFLICT": "This entry was already recorded with different content.",
+      "INTERNAL": "Something went wrong. Try again."
+    }
+  }
+}
