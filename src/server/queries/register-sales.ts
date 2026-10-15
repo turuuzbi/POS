@@ -1,0 +1,271 @@
+import "server-only";
+import type { Prisma } from "@/generated/prisma/client";
+import type { PaymentMethod } from "@/domain/refund";
+import type { ReceiptKey } from "@/lib/refunds/receipt-input";
+import { db } from "../db";
+
+/**
+ * Sales as the register's Returns screen reads them. Everything is scoped to
+ * the location of the paired device the request comes from (the action passes
+ * it, derived server-side; it is never taken from the client), costs and staff
+ * ids never leave this module, and every query is a bounded read.
+ */
+
+export interface ReturnScope {
+  locationId: string;
+  registerId: string;
+}
+
+// ---------------------------------------------------------------------------
+// Refund policy
+// ---------------------------------------------------------------------------
+
+/**
+ * Refunds older than this many whole days need a manager's approval. There is
+ * no settings column yet; POS_REFUND_WINDOW_DAYS (a positive integer) turns it
+ * on, unset/invalid means no limit. The refund service enforces the same value
+ * when it adopts a persistent setting (the UI only warns).
+ */
+export function refundWindowDays(env: NodeJS.ProcessEnv = process.env): number | null {
+  const raw = env.POS_REFUND_WINDOW_DAYS;
+  if (!raw || !/^\d{1,4}$/.test(raw)) return null;
+  const days = Number(raw);
+  return days > 0 ? days : null;
+}
+
+export async function roundingUnit(): Promise<bigint> {
+  const settings = await db.businessSettings.findUnique({
+    where: { id: 1 },
+    select: { totalRoundingUnit: true },
+  });
+  return settings?.totalRoundingUnit ?? 100n;
+}
+
+// ---------------------------------------------------------------------------
+// One sale, in full
+// ---------------------------------------------------------------------------
+
+const detailSelect = {
+  id: true,
+  number: true,
+  occurredAt: true,
+  locationId: true,
+  registerId: true,
+  shiftId: true,
+  totalAmount: true,
+  itemsAmount: true,
+  tipAmount: true,
+  roundingAmount: true,
+  vatAmount: true,
+  cashier: { select: { name: true } },
+  void: { select: { reason: true, createdAt: true } },
+  lines: {
+    orderBy: { lineNo: "asc" },
+    select: {
+      id: true,
+      lineNo: true,
+      name: true,
+      sku: true,
+      variantId: true,
+      unit: true,
+      qtyMilli: true,
+      unitPrice: true,
+      totalAmount: true,
+      netAmount: true,
+      vatAmount: true,
+      cityTaxAmount: true,
+      pricesIncludeTax: true,
+      productType: true,
+      giftCard: { select: { id: true } },
+      product: { select: { trackStock: true, type: true } },
+    },
+  },
+  payments: {
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: {
+      id: true,
+      method: true,
+      amount: true,
+      change: true,
+      reference: true,
+      cardLast4: true,
+    },
+  },
+  refunds: {
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: {
+      id: true,
+      number: true,
+      occurredAt: true,
+      reason: true,
+      totalAmount: true,
+      tipAmount: true,
+      lines: {
+        select: {
+          saleLineId: true,
+          qtyMilli: true,
+          restock: true,
+          netAmount: true,
+          vatAmount: true,
+          cityTaxAmount: true,
+          totalAmount: true,
+        },
+      },
+      payments: { select: { method: true, amount: true, originalPaymentId: true } },
+    },
+  },
+} satisfies Prisma.SaleSelect;
+
+type DetailRow = Prisma.SaleGetPayload<{ select: typeof detailSelect }>;
+
+/** JSON-ready (ISO dates; the action turns bigint into decimal strings). */
+export function toReturnSale(row: DetailRow) {
+  return {
+    id: row.id,
+    number: row.number,
+    occurredAt: row.occurredAt.toISOString(),
+    locationId: row.locationId,
+    registerId: row.registerId,
+    shiftId: row.shiftId,
+    cashierName: row.cashier.name,
+    totalAmount: row.totalAmount,
+    itemsAmount: row.itemsAmount,
+    tipAmount: row.tipAmount,
+    roundingAmount: row.roundingAmount,
+    vatAmount: row.vatAmount,
+    status: row.void ? ("VOIDED" as const) : ("COMPLETED" as const),
+    voided: row.void ? { reason: row.void.reason, at: row.void.createdAt.toISOString() } : null,
+    lines: row.lines.map((line) => ({
+      id: line.id,
+      lineNo: line.lineNo,
+      name: line.name,
+      sku: line.sku,
+      variantId: line.variantId,
+      unit: line.unit,
+      qtyMilli: line.qtyMilli,
+      unitPrice: line.unitPrice,
+      totalAmount: line.totalAmount,
+      netAmount: line.netAmount,
+      vatAmount: line.vatAmount,
+      cityTaxAmount: line.cityTaxAmount,
+      pricesIncludeTax: line.pricesIncludeTax,
+      // Same rule as the stock ledger: only tracked STANDARD products move stock.
+      tracksStock: line.product.trackStock && line.product.type === "STANDARD",
+      isGiftCard: line.productType === "GIFT_CARD" || line.giftCard !== null,
+    })),
+    payments: row.payments.map((p) => ({
+      id: p.id,
+      method: p.method as PaymentMethod,
+      amount: p.amount,
+      change: p.change,
+      reference: p.reference,
+      cardLast4: p.cardLast4,
+    })),
+    refunds: row.refunds.map((r) => ({
+      id: r.id,
+      number: r.number,
+      occurredAt: r.occurredAt.toISOString(),
+      reason: r.reason,
+      totalAmount: r.totalAmount,
+      tipAmount: r.tipAmount,
+      lines: r.lines,
+      payments: r.payments.map((p) => ({
+        method: p.method as PaymentMethod,
+        amount: p.amount,
+        originalPaymentId: p.originalPaymentId,
+      })),
+    })),
+  };
+}
+
+function keyFilter(key: ReceiptKey): Prisma.SaleWhereInput {
+  switch (key.kind) {
+    case "number":
+      return { number: key.number };
+    case "token":
+      return { publicToken: key.token };
+    case "id":
+      return { id: key.id };
+  }
+}
+
+/** The sale behind a typed/scanned receipt key, at this device's location, or null. */
+export async function findReturnSale(scope: ReturnScope, key: ReceiptKey) {
+  const row = await db.sale.findFirst({
+    where: { AND: [keyFilter(key), { locationId: scope.locationId }] },
+    select: detailSelect,
+  });
+  return row ? toReturnSale(row) : null;
+}
+
+// ---------------------------------------------------------------------------
+// Recent sales
+// ---------------------------------------------------------------------------
+
+export const RECENT_LIMIT = 30;
+
+export type RecentState = "OK" | "PARTIALLY_REFUNDED" | "REFUNDED" | "VOIDED";
+
+const recentSelect = {
+  id: true,
+  number: true,
+  occurredAt: true,
+  shiftId: true,
+  totalAmount: true,
+  void: { select: { id: true } },
+  lines: { select: { id: true, qtyMilli: true, productType: true } },
+  payments: { select: { method: true } },
+  refunds: { select: { lines: { select: { saleLineId: true, qtyMilli: true } } } },
+} satisfies Prisma.SaleSelect;
+
+type RecentRow = Prisma.SaleGetPayload<{ select: typeof recentSelect }>;
+
+export function recentState(row: RecentRow): RecentState {
+  if (row.void) return "VOIDED";
+  if (row.refunds.length === 0) return "OK";
+  const refunded = new Map<string, number>();
+  for (const refund of row.refunds) {
+    for (const line of refund.lines) {
+      refunded.set(line.saleLineId, (refunded.get(line.saleLineId) ?? 0) + line.qtyMilli);
+    }
+  }
+  const refundable = row.lines.filter((l) => l.productType !== "GIFT_CARD");
+  const anyLeft = refundable.some((l) => (refunded.get(l.id) ?? 0) < l.qtyMilli);
+  return anyLeft ? "PARTIALLY_REFUNDED" : "REFUNDED";
+}
+
+export interface RecentSalesFilter {
+  /** Only this shift (the open one), or every shift of the register. */
+  shiftId: string | null;
+  /** Part of a receipt number. */
+  query: string;
+}
+
+/** Newest first. `truncated` says more matched than the page holds. */
+export async function listRecentSales(scope: ReturnScope, filter: RecentSalesFilter) {
+  const query = filter.query.trim();
+  const rows = await db.sale.findMany({
+    where: {
+      locationId: scope.locationId,
+      registerId: scope.registerId,
+      ...(filter.shiftId ? { shiftId: filter.shiftId } : {}),
+      ...(query ? { number: { contains: query, mode: "insensitive" as const } } : {}),
+    },
+    orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
+    take: RECENT_LIMIT + 1,
+    select: recentSelect,
+  });
+  return {
+    sales: rows.slice(0, RECENT_LIMIT).map((row) => ({
+      id: row.id,
+      number: row.number,
+      occurredAt: row.occurredAt.toISOString(),
+      shiftId: row.shiftId,
+      totalAmount: row.totalAmount,
+      lineCount: row.lines.length,
+      methods: [...new Set(row.payments.map((p) => p.method as PaymentMethod))],
+      state: recentState(row),
+    })),
+    truncated: rows.length > RECENT_LIMIT,
+  };
+}

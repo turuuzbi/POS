@@ -6,7 +6,9 @@ import { z } from "zod";
 import { APPROVABLE_PERMISSIONS } from "@/domain/permissions";
 import { isLocale, LOCALE_COOKIE } from "@/i18n/config";
 import { isApprovalScope } from "@/domain/discounts";
+import { isRefundApprovalScope } from "@/domain/refund-contract";
 import { isCashMovementApprovalScope } from "@/domain/shift-contract";
+import { isVoidApprovalScope } from "@/domain/void-contract";
 import { grantApproval } from "../auth/approval";
 import { readDeviceToken } from "../auth/device";
 import { KNOWN_BROWSER_COOKIE, knownBrowserCookieOptions } from "../auth/known-browser";
@@ -117,10 +119,18 @@ export const requestApproval = defineAction({
   input: z.object({
     pin: z.string().regex(/^\d{4,8}$/),
     permission: z.enum(APPROVABLE_PERMISSIONS),
+    // Every scope a gated action recomputes and verifies: checkout discounts and
+    // price overrides, Phase 3 refunds, voids and cash movements.
     scope: z
       .string()
       .max(200)
-      .refine((scope) => isApprovalScope(scope) || isCashMovementApprovalScope(scope)),
+      .refine(
+        (scope) =>
+          isApprovalScope(scope) ||
+          isRefundApprovalScope(scope) ||
+          isVoidApprovalScope(scope) ||
+          isCashMovementApprovalScope(scope),
+      ),
   }),
   async run({ input, user, meta }) {
     const result = await grantApproval(
