@@ -4,6 +4,7 @@ import {
   Boxes,
   ClipboardCheck,
   ClipboardList,
+  Clock,
   FileSpreadsheet,
   FolderTree,
   Grid3x3,
@@ -26,6 +27,7 @@ import { NAV_HREF, type NavKey, type VisibleNav } from "./nav-config";
 const ICONS: Record<NavKey, LucideIcon> = {
   dashboard: LayoutDashboard,
   register: ShoppingCart,
+  shifts: Clock,
   products: Package,
   categories: FolderTree,
   quickKeys: Grid3x3,

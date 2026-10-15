@@ -51,6 +51,7 @@ import { CatalogGrid } from "./catalog-grid";
 import { HeldDialog } from "./held-dialog";
 import { HelpPopover } from "./help-popover";
 import { DiscountDialog, NoteDialog, PriceDialog, QtyDialog } from "./line-dialogs";
+import { ShiftMenu } from "@/components/shifts/shift-menu";
 import { OpenShiftScreen } from "./open-shift";
 import { SearchBox } from "./search-box";
 import { SuccessDialog } from "./success-dialog";
@@ -550,6 +551,13 @@ function Selling({
                 <WifiOff aria-hidden /> {t("offline.badge")}
               </Badge>
             ) : null}
+            <ShiftMenu
+              shiftId={context.shift!.id}
+              role={user.role}
+              heldCount={store.held.length}
+              cartCount={itemCount}
+              charging={locked}
+            />
             <HelpPopover open={helpOpen} onOpenChange={setHelpOpen} />
           </>
         }

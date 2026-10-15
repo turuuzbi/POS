@@ -10,6 +10,7 @@ export const NAV_SECTIONS = [
     items: [
       { key: "dashboard", href: "/dashboard", permission: null },
       { key: "register", href: "/register", permission: "pos.sell" },
+      { key: "shifts", href: "/shifts", permission: "reports.view" },
     ],
   },
   {

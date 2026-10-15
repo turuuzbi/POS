@@ -6,6 +6,7 @@ import { z } from "zod";
 import { APPROVABLE_PERMISSIONS } from "@/domain/permissions";
 import { isLocale, LOCALE_COOKIE } from "@/i18n/config";
 import { isApprovalScope } from "@/domain/discounts";
+import { isCashMovementApprovalScope } from "@/domain/shift-contract";
 import { grantApproval } from "../auth/approval";
 import { readDeviceToken } from "../auth/device";
 import { KNOWN_BROWSER_COOKIE, knownBrowserCookieOptions } from "../auth/known-browser";
@@ -116,7 +117,10 @@ export const requestApproval = defineAction({
   input: z.object({
     pin: z.string().regex(/^\d{4,8}$/),
     permission: z.enum(APPROVABLE_PERMISSIONS),
-    scope: z.string().max(200).refine(isApprovalScope),
+    scope: z
+      .string()
+      .max(200)
+      .refine((scope) => isApprovalScope(scope) || isCashMovementApprovalScope(scope)),
   }),
   async run({ input, user, meta }) {
     const result = await grantApproval(
