@@ -182,7 +182,14 @@ export function ReportView({
   const locale = useLocale();
   const format = useFormatter();
   const money = (amount: Money) => formatMoney(amount, { locale });
-  const when = (date: Date) => format.dateTime(date, { dateStyle: "medium", timeStyle: "short" });
+  // The server (Node ICU) and the browser spell Mongolian dates differently ("10-р сар" vs
+  // "M10"); this report is also server-rendered (back-office shift page), so the date text is
+  // exempt from the hydration comparison instead of raising React error #418 on every view.
+  const when = (date: Date) => (
+    <span suppressHydrationWarning>
+      {format.dateTime(date, { dateStyle: "medium", timeStyle: "short" })}
+    </span>
+  );
   const z = report.kind === "Z" ? report.closing : undefined;
   const variance = z?.cashVariance ?? 0n;
   const tone = z
