@@ -30,7 +30,7 @@ export const findReturnSaleAction = defineAction({
     const sale = key ? await findReturnSale(device, key) : null;
     return toWire({
       sale,
-      policy: { maxRefundWindowDays: refundWindowDays() },
+      policy: { maxRefundWindowDays: await refundWindowDays() },
       roundingUnit: await roundingUnit(),
     });
   },

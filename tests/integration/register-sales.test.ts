@@ -219,19 +219,39 @@ describe("register sales queries (Returns screen)", () => {
     expect(await findReturnSale(scope, { kind: "number", number: sale.number })).not.toBeNull();
   });
 
-  it("reads the refund window from the environment, ignoring junk", () => {
-    expect(refundWindowDays({ POS_REFUND_WINDOW_DAYS: "30" } as unknown as NodeJS.ProcessEnv)).toBe(
-      30,
-    );
-    expect(refundWindowDays({} as NodeJS.ProcessEnv)).toBeNull();
-    expect(
-      refundWindowDays({ POS_REFUND_WINDOW_DAYS: "0" } as unknown as NodeJS.ProcessEnv),
-    ).toBeNull();
-    expect(
-      refundWindowDays({ POS_REFUND_WINDOW_DAYS: "abc" } as unknown as NodeJS.ProcessEnv),
-    ).toBeNull();
-    expect(
-      refundWindowDays({ POS_REFUND_WINDOW_DAYS: "-5" } as unknown as NodeJS.ProcessEnv),
-    ).toBeNull();
+  it("offers restock only for lines whose sale really moved stock (same rule as the refund service)", async () => {
+    const till = await createTill();
+    const { product, variant } = await createStockedProduct(till, {
+      price: 99_900n,
+      cost: 40_000n,
+    });
+    const scope = { locationId: till.location.id, registerId: till.register.id };
+    const tracksStock = async (saleId: string) =>
+      (await findReturnSale(scope, { kind: "id", id: saleId }))!.lines[0]!.tracksStock;
+
+    const tracked = await sell(till, variant.id);
+    expect(await tracksStock(tracked.saleId)).toBe(true);
+
+    // Sold while the product was not tracked, tracked since: no stock moved, so no restock.
+    await db.product.update({ where: { id: product.id }, data: { trackStock: false } });
+    const untracked = await sell(till, variant.id);
+    await db.product.update({ where: { id: product.id }, data: { trackStock: true } });
+    expect(await tracksStock(untracked.saleId)).toBe(false);
+    expect(await tracksStock(tracked.saleId)).toBe(true);
+  });
+
+  it("reads the refund window from the business settings", async () => {
+    const set = (refundWindowDays: number | null) =>
+      db.businessSettings.upsert({
+        where: { id: 1 },
+        update: { refundWindowDays },
+        create: { id: 1, businessName: "Shop", refundWindowDays },
+      });
+    await set(null);
+    expect(await refundWindowDays()).toBeNull();
+    await set(30);
+    expect(await refundWindowDays()).toBe(30);
+    await set(0);
+    expect(await refundWindowDays()).toBeNull();
   });
 });

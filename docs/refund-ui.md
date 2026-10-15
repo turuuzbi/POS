@@ -22,5 +22,5 @@ The cashier-facing side of `docs/shifts-refunds-domain.md`. The UI never decides
 
 - Checkout must accept an `EXCHANGE_CREDIT` tender (amount = credit applied) for an exchange's replacement sale; the current `TENDER_METHODS` does not.
 - Error texts: the UI looks up `refundErrors.<messageKey>` (e.g. `refundErrors.refund.errors.OVER_REFUND`), then `refundErrors.<CODE>`, then its own `refunds.issues.<CODE>`.
-- The refund window has no settings column; `POS_REFUND_WINDOW_DAYS` (positive integer) switches the warning/approval on until it does.
+- The refund window is `BusinessSettings.refundWindowDays` (null = none), read by the lookup action and by the service alike.
 - The refund receipt link is `/receipt/refund/<refundId>`.

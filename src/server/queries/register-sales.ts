@@ -21,16 +21,18 @@ export interface ReturnScope {
 // ---------------------------------------------------------------------------
 
 /**
- * Refunds older than this many whole days need a manager's approval. There is
- * no settings column yet; POS_REFUND_WINDOW_DAYS (a positive integer) turns it
- * on, unset/invalid means no limit. The refund service enforces the same value
- * when it adopts a persistent setting (the UI only warns).
+ * Refunds older than this many whole days need a manager's approval:
+ * `BusinessSettings.refundWindowDays` (null = no limit), the same value the
+ * refund service enforces, so the screen asks for exactly the approvals the
+ * server will require.
  */
-export function refundWindowDays(env: NodeJS.ProcessEnv = process.env): number | null {
-  const raw = env.POS_REFUND_WINDOW_DAYS;
-  if (!raw || !/^\d{1,4}$/.test(raw)) return null;
-  const days = Number(raw);
-  return days > 0 ? days : null;
+export async function refundWindowDays(): Promise<number | null> {
+  const settings = await db.businessSettings.findUnique({
+    where: { id: 1 },
+    select: { refundWindowDays: true },
+  });
+  const days = settings?.refundWindowDays ?? null;
+  return days !== null && days > 0 ? days : null;
 }
 
 export async function roundingUnit(): Promise<bigint> {
@@ -119,7 +121,7 @@ const detailSelect = {
 type DetailRow = Prisma.SaleGetPayload<{ select: typeof detailSelect }>;
 
 /** JSON-ready (ISO dates; the action turns bigint into decimal strings). */
-export function toReturnSale(row: DetailRow) {
+export function toReturnSale(row: DetailRow, movedVariants: ReadonlySet<string>) {
   return {
     id: row.id,
     number: row.number,
@@ -149,8 +151,14 @@ export function toReturnSale(row: DetailRow) {
       vatAmount: line.vatAmount,
       cityTaxAmount: line.cityTaxAmount,
       pricesIncludeTax: line.pricesIncludeTax,
-      // Same rule as the stock ledger: only tracked STANDARD products move stock.
-      tracksStock: line.product.trackStock && line.product.type === "STANDARD",
+      // Same rule as the refund service: a line restocks only when the product is tracked
+      // STANDARD now AND this sale really moved its stock. Anything else and the screen
+      // would default "restock" on where the server turns it off, and the approval scope
+      // (which binds the effective restock flags) would never match.
+      tracksStock:
+        line.product.trackStock &&
+        line.product.type === "STANDARD" &&
+        movedVariants.has(line.variantId),
       isGiftCard: line.productType === "GIFT_CARD" || line.giftCard !== null,
     })),
     payments: row.payments.map((p) => ({
@@ -195,7 +203,12 @@ export async function findReturnSale(scope: ReturnScope, key: ReceiptKey) {
     where: { AND: [keyFilter(key), { locationId: scope.locationId }] },
     select: detailSelect,
   });
-  return row ? toReturnSale(row) : null;
+  if (!row) return null;
+  const moved = await db.stockMovement.findMany({
+    where: { saleId: row.id, type: "SALE" },
+    select: { variantId: true },
+  });
+  return toReturnSale(row, new Set(moved.map((m) => m.variantId)));
 }
 
 // ---------------------------------------------------------------------------
