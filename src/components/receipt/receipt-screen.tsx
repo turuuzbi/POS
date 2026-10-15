@@ -44,6 +44,8 @@ async function PaperSwitch({ basePath, paper }: { basePath: string; paper: Recei
 /** Shared body of the staff and public receipt pages: toolbar + the slip. */
 export async function ReceiptScreen({
   model,
+  slip,
+  pdfHref,
   paper,
   basePath,
   sharePath,
@@ -51,7 +53,10 @@ export async function ReceiptScreen({
   heading,
   topSlot,
 }: {
-  model: ReceiptModel;
+  /** A sale receipt model, or pass `slip` (+ `pdfHref`) for another kind of slip. */
+  model?: ReceiptModel;
+  slip?: React.ReactNode;
+  pdfHref?: string;
   paper: ReceiptPaper;
   /** Path of the current page (for the paper toggle). */
   basePath: string;
@@ -70,11 +75,11 @@ export async function ReceiptScreen({
         <h1 className="text-xl font-semibold tracking-tight">{heading}</h1>
         <ReceiptActions
           sharePath={sharePath}
-          pdfHref={`/api/receipts/${encodeURIComponent(token)}/pdf?paper=${paper}`}
+          pdfHref={pdfHref ?? `/api/receipts/${encodeURIComponent(token)}/pdf?paper=${paper}`}
         />
         <PaperSwitch basePath={basePath} paper={paper} />
       </div>
-      <Receipt model={model} paper={paper} />
+      {slip ?? (model ? <Receipt model={model} paper={paper} /> : null)}
     </main>
   );
 }

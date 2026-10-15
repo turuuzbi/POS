@@ -19,6 +19,8 @@
     "catalog": "Бараа",
     "inventory": "Агуулах",
     "purchasing": "Худалдан авалт",
-    "settings": "Тохиргоо"
-  }
+    "settings": "Тохиргоо",
+    "sales": "Борлуулалт"
+  },
+  "salesHistory": "Борлуулалтын түүх"
 }

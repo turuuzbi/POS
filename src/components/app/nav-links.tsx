@@ -12,6 +12,7 @@ import {
   Package,
   PackageCheck,
   Percent,
+  Receipt,
   ShoppingCart,
   SlidersHorizontal,
   Truck,
@@ -26,6 +27,7 @@ import { NAV_HREF, type NavKey, type VisibleNav } from "./nav-config";
 const ICONS: Record<NavKey, LucideIcon> = {
   dashboard: LayoutDashboard,
   register: ShoppingCart,
+  salesHistory: Receipt,
   products: Package,
   categories: FolderTree,
   quickKeys: Grid3x3,

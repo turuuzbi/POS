@@ -39,13 +39,23 @@ export default async function StaffReceiptPage({
       token={receipt.shareToken}
       heading={`${t("title")} ${receipt.model.number}`}
       topSlot={
-        <Link
-          href="/register"
-          className={cn(buttonVariants({ variant: "ghost" }), "-ml-3 self-start")}
-        >
-          <ArrowLeft aria-hidden />
-          {t("actions.backToRegister")}
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href="/register"
+            className={cn(buttonVariants({ variant: "ghost" }), "-ml-3 self-start")}
+          >
+            <ArrowLeft aria-hidden />
+            {t("actions.backToRegister")}
+          </Link>
+          {receipt.model.voided ? (
+            <Link
+              href={`/receipt/void/${saleId}`}
+              className={cn(buttonVariants({ variant: "outline" }))}
+            >
+              {t("voidSlip.pageTitle")}
+            </Link>
+          ) : null}
+        </div>
       }
     />
   );

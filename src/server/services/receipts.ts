@@ -48,6 +48,10 @@ const receiptSelect = {
     select: { name: true, address: true, phone: true, timezone: true, receiptHeader: true },
   },
   void: { select: { saleId: true } },
+  refunds: {
+    orderBy: { occurredAt: "asc" },
+    select: { number: true, occurredAt: true, totalAmount: true },
+  },
   fiscalReceipt: { select: { status: true, lotteryCode: true, qrData: true } },
   lines: {
     orderBy: { lineNo: "asc" },
@@ -88,7 +92,7 @@ const receiptSelect = {
 
 type ReceiptRow = Prisma.SaleGetPayload<{ select: typeof receiptSelect }>;
 
-async function loadBusiness() {
+export async function loadBusiness() {
   return db.businessSettings.findUnique({
     where: { id: 1 },
     select: {
@@ -148,6 +152,7 @@ async function toModel(row: ReceiptRow): Promise<ReceiptModel> {
     })),
     payments: row.payments,
     fiscal: row.fiscalReceipt,
+    refunds: row.refunds,
   };
   return buildReceiptModel(source);
 }

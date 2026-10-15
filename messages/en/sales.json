@@ -1,1 +1,196 @@
-{}
+{
+  "title": "Sales history",
+  "description": "Filter completed sales, refunds and voided receipts.",
+  "status": {
+    "COMPLETED": "Completed",
+    "VOIDED": "Voided",
+    "REFUNDED": "Refunded",
+    "PARTIALLY_REFUNDED": "Partially refunded"
+  },
+  "filters": {
+    "heading": "Filter sales",
+    "search": "Receipt number",
+    "searchPlaceholder": "e.g. UB1-000123",
+    "from": "From",
+    "to": "To",
+    "status": "Status",
+    "location": "Location",
+    "register": "Register",
+    "cashier": "Cashier",
+    "method": "Payment method",
+    "minAmount": "Min amount (₮)",
+    "maxAmount": "Max amount (₮)",
+    "all": "All",
+    "apply": "Filter",
+    "reset": "Reset",
+    "export": "Download CSV",
+    "invalid": "Some filters were not valid and were ignored."
+  },
+  "totals": {
+    "heading": "Totals",
+    "count": "Sales",
+    "gross": "Sales total",
+    "refunded": "Refunded",
+    "net": "Net sales",
+    "voided": "Voided"
+  },
+  "list": {
+    "heading": "Sales list",
+    "empty": "No sales found",
+    "emptyHint": "Try changing the filters."
+  },
+  "columns": {
+    "number": "Receipt no.",
+    "date": "Date",
+    "location": "Location",
+    "register": "Register",
+    "cashier": "Cashier",
+    "methods": "Payment",
+    "total": "Total",
+    "refunded": "Refunded",
+    "status": "Status"
+  },
+  "csv": {
+    "number": "Receipt no.",
+    "date": "Date",
+    "location": "Location",
+    "register": "Register",
+    "cashier": "Cashier",
+    "methods": "Payment",
+    "total": "Total",
+    "refunded": "Refunded",
+    "status": "Status"
+  },
+  "detail": {
+    "title": "Sale details",
+    "heading": "Sale {number}",
+    "back": "Back to the list",
+    "openReceipt": "Open receipt",
+    "shareLink": "Share link",
+    "voidSlip": "Voided receipt",
+    "info": {
+      "title": "Overview",
+      "location": "Location",
+      "register": "Register",
+      "cashier": "Cashier",
+      "shift": "Shift opened",
+      "customer": "Customer",
+      "buyerTaxId": "Buyer tax ID",
+      "note": "Note",
+      "origin": "Source",
+      "review": "Review",
+      "reviewed": "Reviewed by a manager",
+      "needsReview": "Waiting for review"
+    },
+    "origin": {
+      "ONLINE": "Online",
+      "OFFLINE_SYNC": "Synced from offline"
+    },
+    "lines": {
+      "title": "Items",
+      "no": "No.",
+      "item": "Item",
+      "qty": "Qty",
+      "price": "Unit price",
+      "vat": "Tax",
+      "discount": "Discount",
+      "total": "Total"
+    },
+    "totals": {
+      "title": "Totals",
+      "items": "Items",
+      "discount": "Discount (included)",
+      "tip": "Tip",
+      "rounding": "Rounding",
+      "total": "Amount paid"
+    },
+    "taxes": {
+      "title": "Taxes",
+      "kind": "Type",
+      "base": "Net amount",
+      "vat": "VAT",
+      "cityTax": "City tax",
+      "vatRate": "VAT {rate}%",
+      "cityRate": "City tax {rate}%",
+      "treatment": {
+        "ZERO_RATED": "VAT 0%",
+        "EXEMPT": "VAT exempt"
+      }
+    },
+    "discounts": {
+      "title": "Discounts",
+      "scope": "Applies to",
+      "source": "Source",
+      "reason": "Reason",
+      "approvedBy": "Approved by",
+      "amount": "Amount",
+      "onLine": "Line {no}",
+      "onCart": "Cart",
+      "sources": {
+        "MANUAL": "Manual",
+        "AUTOMATIC": "Automatic",
+        "CODE": "Coupon",
+        "LOYALTY": "Loyalty"
+      }
+    },
+    "payments": {
+      "title": "Payments",
+      "method": "Method",
+      "reference": "Reference",
+      "tendered": "Tendered",
+      "change": "Change",
+      "amount": "Amount"
+    },
+    "approvals": {
+      "title": "Approvals",
+      "none": "No approvals were needed.",
+      "kinds": {
+        "discount": "Discount",
+        "priceOverride": "Price override",
+        "void": "Void",
+        "refund": "Refund",
+        "review": "Review"
+      }
+    },
+    "fiscal": {
+      "title": "E-receipt",
+      "status": "Status",
+      "lottery": "Lottery number",
+      "issuedAt": "Registered",
+      "statuses": {
+        "NONE": "Not registered",
+        "PENDING": "Pending",
+        "ISSUING": "Registering",
+        "ISSUED": "Registered",
+        "FAILED": "Failed",
+        "CANCELLED": "Cancelled"
+      }
+    },
+    "void": {
+      "title": "Voided",
+      "when": "Date",
+      "reason": "Reason",
+      "by": "Voided by",
+      "approvedBy": "Approved by",
+      "note": "Note",
+      "amount": "Amount reversed"
+    },
+    "refunds": {
+      "title": "Refunds",
+      "number": "Refund no.",
+      "date": "Date",
+      "reason": "Reason",
+      "by": "Refunded by",
+      "approvedBy": "Approved by",
+      "paidBack": "Paid back",
+      "amount": "Amount",
+      "exchange": "Exchange {number}",
+      "total": "Total refunded: {amount}"
+    },
+    "audit": {
+      "title": "Audit trail",
+      "none": "No entries.",
+      "system": "System"
+    }
+  }
+}

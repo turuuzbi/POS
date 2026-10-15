@@ -61,5 +61,59 @@
   },
   "pdf": {
     "title": "Receipt {number}"
+  },
+  "refundedBanner": "REFUNDED",
+  "partiallyRefundedBanner": "PARTIALLY REFUNDED",
+  "refundedLine": "Refund {number}",
+  "refund": {
+    "title": "CUSTOMER REFUND",
+    "pageTitle": "Refund receipt",
+    "publicTitle": "Refund receipt",
+    "refundNo": "Refund no.",
+    "originalReceiptNo": "Original receipt no.",
+    "exchangeSaleNo": "Exchange receipt no.",
+    "reason": "Reason",
+    "processedBy": "Refunded by",
+    "approvedBy": "Approved by",
+    "refundedItems": "Refunded items",
+    "refundedTotal": "Total refunded",
+    "taxReversal": "Tax reversal",
+    "payoutsHeading": "Paid back",
+    "cashReturned": "Cash returned",
+    "exchangeCredit": "Moved to exchange",
+    "fiscalPending": "E-receipt return is being registered",
+    "fiscalFailed": "E-receipt return not registered",
+    "fiscalCancelled": "E-receipt return cancelled",
+    "fiscalIssued": "E-receipt return registered",
+    "reasons": {
+      "DEFECTIVE": "Defective product",
+      "DAMAGED": "Damaged",
+      "WRONG_ITEM": "Wrong item",
+      "NOT_AS_DESCRIBED": "Not as described",
+      "CHANGED_MIND": "Changed mind",
+      "OTHER": "Other"
+    },
+    "pdfTitle": "Refund {number}"
+  },
+  "voidSlip": {
+    "title": "VOIDED RECEIPT",
+    "pageTitle": "Voided receipt",
+    "publicTitle": "Voided receipt",
+    "saleDate": "Sold on",
+    "voidDate": "Voided on",
+    "voidedBy": "Voided by",
+    "voidedTotal": "Voided amount",
+    "reversalsHeading": "Payments reversed",
+    "reasons": {
+      "ENTRY_ERROR": "Entry error",
+      "CUSTOMER_CANCELLED": "Customer cancelled",
+      "PAYMENT_PROBLEM": "Payment problem",
+      "OTHER": "Other"
+    },
+    "pdfTitle": "Voided receipt {number}"
+  },
+  "creditNote": {
+    "backToSale": "Back to the sale",
+    "originalReceipt": "Original receipt"
   }
 }

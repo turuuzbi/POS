@@ -1,5 +1,11 @@
 import { useLocale, useTranslations } from "next-intl";
 import type { ReceiptModel } from "@/domain/receipt";
+import {
+  buildRefundReceiptRows,
+  buildVoidReceiptRows,
+  makeCreditLabels,
+} from "@/domain/receipt-credit-layout";
+import type { RefundReceiptModel, VoidReceiptModel } from "@/domain/receipt-credit";
 import { buildReceiptRows, makeReceiptLabels, type ReceiptRow } from "@/domain/receipt-layout";
 import { cn } from "@/lib/utils";
 
@@ -70,6 +76,47 @@ function RowView({ row }: { row: ReceiptRow }) {
 }
 
 /**
+ * The paper itself: draws a list of layout rows on an 80 mm / 58 mm sheet.
+ * Sale receipts, credit notes and void slips all go through this, so print
+ * CSS and look are identical.
+ */
+export function ReceiptSheet({
+  rows,
+  paper = 80,
+  label,
+  className,
+}: {
+  rows: readonly ReceiptRow[];
+  paper?: ReceiptPaper;
+  label: string;
+  className?: string;
+}) {
+  return (
+    <>
+      <style>{`@media print {
+  ${PAPER_CSS[paper]}
+  html, body { background: #fff !important; color: #000 !important; margin: 0 !important; }
+  .receipt-sheet { width: ${paper}mm !important; max-width: none !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; }
+}`}</style>
+      <article
+        aria-label={label}
+        data-paper={paper}
+        className={cn(
+          "receipt-sheet mx-auto box-border w-full bg-white px-[4mm] py-[4mm] font-mono leading-snug text-black",
+          "rounded-sm border border-black/15 shadow-sm",
+          paper === 80 ? "max-w-[80mm]" : "max-w-[58mm]",
+          className,
+        )}
+      >
+        {rows.map((row, index) => (
+          <RowView key={index} row={row} />
+        ))}
+      </article>
+    </>
+  );
+}
+
+/**
  * Thermal-paper receipt. Pure presentation of a `ReceiptModel`; contains no
  * app chrome, so printing a page that holds only this (and `print:hidden`
  * toolbars) yields exactly the slip.
@@ -87,28 +134,52 @@ export function Receipt({
   const locale = useLocale();
   const labels = makeReceiptLabels(t as unknown as Parameters<typeof makeReceiptLabels>[0]);
   const rows = buildReceiptRows(model, labels, { locale });
-
   return (
-    <>
-      <style>{`@media print {
-  ${PAPER_CSS[paper]}
-  html, body { background: #fff !important; color: #000 !important; margin: 0 !important; }
-  .receipt-sheet { width: ${paper}mm !important; max-width: none !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; }
-}`}</style>
-      <article
-        aria-label={`${t("title")} ${model.number}`}
-        data-paper={paper}
-        className={cn(
-          "receipt-sheet mx-auto box-border w-full bg-white px-[4mm] py-[4mm] font-mono leading-snug text-black",
-          "rounded-sm border border-black/15 shadow-sm",
-          paper === 80 ? "max-w-[80mm]" : "max-w-[58mm]",
-          className,
-        )}
-      >
-        {rows.map((row, index) => (
-          <RowView key={index} row={row} />
-        ))}
-      </article>
-    </>
+    <ReceiptSheet
+      rows={rows}
+      paper={paper}
+      label={`${t("title")} ${model.number}`}
+      className={className}
+    />
+  );
+}
+
+/** Credit note (refund) slip. */
+export function RefundReceipt({
+  model,
+  paper = 80,
+}: {
+  model: RefundReceiptModel;
+  paper?: ReceiptPaper;
+}) {
+  const t = useTranslations("receipt");
+  const locale = useLocale();
+  const labels = makeCreditLabels(t as unknown as Parameters<typeof makeCreditLabels>[0]);
+  return (
+    <ReceiptSheet
+      rows={buildRefundReceiptRows(model, labels, { locale })}
+      paper={paper}
+      label={`${labels.refundTitle} ${model.number}`}
+    />
+  );
+}
+
+/** Voided-sale slip. */
+export function VoidReceipt({
+  model,
+  paper = 80,
+}: {
+  model: VoidReceiptModel;
+  paper?: ReceiptPaper;
+}) {
+  const t = useTranslations("receipt");
+  const locale = useLocale();
+  const labels = makeCreditLabels(t as unknown as Parameters<typeof makeCreditLabels>[0]);
+  return (
+    <ReceiptSheet
+      rows={buildVoidReceiptRows(model, labels, { locale })}
+      paper={paper}
+      label={`${labels.voidTitle} ${model.number}`}
+    />
   );
 }

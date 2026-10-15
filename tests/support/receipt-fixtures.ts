@@ -67,6 +67,8 @@ export interface ReceiptSaleOptions {
   token?: string;
   number?: string;
   voided?: boolean;
+  /** Manager who approved the void (only with `voided`). */
+  voidApprovedById?: string;
   occurredAt?: Date;
   /** Reuse an existing location/shift/cashier (to make several sales). */
   context?: ReceiptContext;
@@ -212,6 +214,7 @@ export async function createReceiptSale(options: ReceiptSaleOptions = {}) {
         shiftId: context.shiftId,
         reason: "ENTRY_ERROR",
         voidedById: context.cashierId,
+        approvedById: options.voidApprovedById ?? null,
       },
     });
   }

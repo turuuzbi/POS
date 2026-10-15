@@ -10,6 +10,7 @@
 import { DEFAULT_TIME_ZONE } from "@/i18n/config";
 import { sum, type Money } from "./money";
 import type { QtyMilli, Unit } from "./qty";
+import { refundState, type RefundState } from "./sale-status";
 
 export const RECEIPT_PAYMENT_METHODS = [
   "CASH",
@@ -98,6 +99,8 @@ export interface ReceiptSource {
     lotteryCode?: string | null;
     qrData?: string | null;
   } | null;
+  /** Refunds recorded against this sale (for the "refunded" banner). */
+  refunds?: readonly { number: string; occurredAt: Date; totalAmount: Money }[];
 }
 
 export interface ReceiptLine {
@@ -154,6 +157,10 @@ export interface ReceiptModel {
   cashier: string;
   buyerTaxId: string | null;
   voided: boolean;
+  /** Whether refunds cover none, part or all of the sale (never set when voided). */
+  refundState: RefundState;
+  refunds: { number: string; date: string; time: string; total: Money }[];
+  refundedTotal: Money;
   note: string | null;
   lines: ReceiptLine[];
   taxRows: ReceiptTaxRow[];
@@ -221,6 +228,62 @@ const splitLines = (value: string | null | undefined): string[] =>
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
 
+/** The business/location block at the top of every slip. */
+export function buildReceiptHeader(
+  business: ReceiptSource["business"],
+  location: ReceiptSource["location"],
+): ReceiptModel["header"] {
+  return {
+    businessName: business?.name ?? "",
+    legalName: clean(business?.legalName),
+    locationName: location.name,
+    address: clean(location.address) ?? clean(business?.address),
+    phones: [
+      ...new Set([clean(location.phone), clean(business?.phone)].filter(Boolean)),
+    ] as string[],
+    email: clean(business?.email),
+    taxId: clean(business?.taxId),
+    text: splitLines(location.header ?? business?.header),
+  };
+}
+
+export const receiptFooter = (business: ReceiptSource["business"]): string[] =>
+  splitLines(business?.footer);
+
+export const cleanText = clean;
+
+/** Tax breakdown: one row per distinct (treatment, VAT rate, city rate). */
+export function groupTaxRows(
+  lines: readonly Pick<
+    ReceiptSource["lines"][number],
+    "taxTreatment" | "vatRateBps" | "cityTaxRateBps" | "netAmount" | "vatAmount" | "cityTaxAmount"
+  >[],
+): ReceiptTaxRow[] {
+  const groups = new Map<string, ReceiptTaxRow>();
+  for (const line of lines) {
+    const vatRateBps = line.taxTreatment === "STANDARD" ? line.vatRateBps : 0;
+    const key = `${line.taxTreatment}:${vatRateBps}:${line.cityTaxRateBps}`;
+    const group = groups.get(key) ?? {
+      treatment: line.taxTreatment,
+      vatRateBps,
+      cityTaxRateBps: line.cityTaxRateBps,
+      base: 0n,
+      vat: 0n,
+      cityTax: 0n,
+    };
+    group.base += line.netAmount;
+    group.vat += line.vatAmount;
+    group.cityTax += line.cityTaxAmount;
+    groups.set(key, group);
+  }
+  return [...groups.values()].sort(
+    (a, b) =>
+      a.treatment.localeCompare(b.treatment) ||
+      a.vatRateBps - b.vatRateBps ||
+      a.cityTaxRateBps - b.cityTaxRateBps,
+  );
+}
+
 export function buildReceiptModel(source: ReceiptSource): ReceiptModel {
   const { business, location, sale } = source;
 
@@ -247,30 +310,7 @@ export function buildReceiptModel(source: ReceiptSource): ReceiptModel {
     note: clean(line.note),
   }));
 
-  // Tax breakdown: one row per distinct (treatment, VAT rate, city rate).
-  const groups = new Map<string, ReceiptTaxRow>();
-  for (const line of sortedLines) {
-    const vatRateBps = line.taxTreatment === "STANDARD" ? line.vatRateBps : 0;
-    const key = `${line.taxTreatment}:${vatRateBps}:${line.cityTaxRateBps}`;
-    const group = groups.get(key) ?? {
-      treatment: line.taxTreatment,
-      vatRateBps,
-      cityTaxRateBps: line.cityTaxRateBps,
-      base: 0n,
-      vat: 0n,
-      cityTax: 0n,
-    };
-    group.base += line.netAmount;
-    group.vat += line.vatAmount;
-    group.cityTax += line.cityTaxAmount;
-    groups.set(key, group);
-  }
-  const taxRows = [...groups.values()].sort(
-    (a, b) =>
-      a.treatment.localeCompare(b.treatment) ||
-      a.vatRateBps - b.vatRateBps ||
-      a.cityTaxRateBps - b.cityTaxRateBps,
-  );
+  const taxRows = groupTaxRows(sortedLines);
 
   const tenders: ReceiptTender[] = source.payments.map((payment) => {
     const brand = clean(payment.cardBrand);
@@ -289,22 +329,15 @@ export function buildReceiptModel(source: ReceiptSource): ReceiptModel {
   const timezone = clean(location.timezone) ?? DEFAULT_TIME_ZONE;
   const when = localDateTime(sale.occurredAt, timezone);
 
-  const headerText = splitLines(location.header ?? business?.header);
+  const refunds = [...(source.refunds ?? [])].sort(
+    (a, b) => a.occurredAt.getTime() - b.occurredAt.getTime() || a.number.localeCompare(b.number),
+  );
+  const refundTotals = refunds.map((r) => r.totalAmount);
+
   const footer = splitLines(business?.footer);
 
   return {
-    header: {
-      businessName: business?.name ?? "",
-      legalName: clean(business?.legalName),
-      locationName: location.name,
-      address: clean(location.address) ?? clean(business?.address),
-      phones: [
-        ...new Set([clean(location.phone), clean(business?.phone)].filter(Boolean)),
-      ] as string[],
-      email: clean(business?.email),
-      taxId: clean(business?.taxId),
-      text: headerText,
-    },
+    header: buildReceiptHeader(business, location),
     number: sale.number,
     date: when.date,
     time: when.time,
@@ -312,6 +345,12 @@ export function buildReceiptModel(source: ReceiptSource): ReceiptModel {
     cashier: sale.cashierName,
     buyerTaxId: clean(sale.buyerTaxId),
     voided: sale.voided === true,
+    refundState: sale.voided === true ? "NONE" : refundState(sale.totalAmount, refundTotals),
+    refunds: refunds.map((r) => {
+      const at = localDateTime(r.occurredAt, timezone);
+      return { number: r.number, date: at.date, time: at.time, total: r.totalAmount };
+    }),
+    refundedTotal: sum(refundTotals),
     note: clean(sale.note),
     lines,
     taxRows,
