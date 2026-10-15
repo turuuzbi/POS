@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { v7 as uuidv7 } from "uuid";
 import { withE2eDb } from "../db";
+import { createProduct } from "./stock";
 import type { RegisterSession } from "./register";
 
 /**
@@ -24,6 +25,7 @@ export interface E2eSale {
 }
 
 export const SALE_TOTAL = 1_850_200n;
+const FIXTURE_STOCK_MILLI = 100_000;
 
 export async function openShiftId(registerId: string): Promise<string> {
   let id: string | undefined;
@@ -49,15 +51,19 @@ export async function insertSale(
     lineIds: { milk: uuidv7(), apples: uuidv7(), book: uuidv7() },
     paymentIds: { card: uuidv7(), cash: uuidv7() },
   };
+  // One product per line (a weighed one for the apples), each stocked by an opening movement.
+  const tag = randomBytes(3).toString("hex");
+  const products = await Promise.all(
+    (["PIECE", "KG", "PIECE"] as const).map((unit, i) =>
+      createProduct({
+        name: `E2E fixture ${tag} ${i + 1}`,
+        unit,
+        locationId: session.locationId,
+        onHandMilli: FIXTURE_STOCK_MILLI,
+      }),
+    ),
+  );
   await withE2eDb(async (db) => {
-    const { rows } = await db.query<{ variantId: string; productId: string }>(
-      `SELECT v.id AS "variantId", v."productId"
-         FROM "ProductVariant" v JOIN "Product" p ON p.id = v."productId"
-        WHERE p."trackStock" AND p."type" = 'STANDARD' ORDER BY v.id LIMIT 1`,
-    );
-    const ref = rows[0];
-    if (!ref) throw new Error("e2e: seed data missing (run pnpm db:seed)");
-
     if (options.shift === "open") {
       const open = await db.query<{ id: string }>(
         `SELECT id FROM "Shift" WHERE "registerId" = $1 AND status = 'OPEN'`,
@@ -108,6 +114,7 @@ export async function insertSale(
       [3, sale.lineIds.book, "Ном", "PIECE", 1000, 250150, 250150, 0, "EXEMPT", 250150],
     ];
     for (const [lineNo, id, name, unit, qty, price, total, vat, treatment, net] of lines) {
+      const ref = products[lineNo - 1]!;
       await db.query(
         `INSERT INTO "SaleLine" (id, "saleId", "lineNo", "variantId", "productId", name, "productType",
                                  unit, "qtyMilli", "catalogUnitPrice", "unitPrice", "pricesIncludeTax",
@@ -130,6 +137,30 @@ export async function insertSale(
           net,
           vat,
         ],
+      );
+    }
+    // The sale moved stock (the refund service restocks only lines whose sale did): one SALE
+    // movement per line and the level's cache, consistent with the opening movement.
+    for (const [index, qty] of [2000, 1500, 1000].entries()) {
+      const ref = products[index]!;
+      await db.query(
+        `INSERT INTO "StockMovement" (id, "variantId", "locationId", type, "qtyDeltaMilli",
+                                      "balanceAfterMilli", "unitCost", "saleId", "createdById")
+         VALUES ($1, $2, $3, 'SALE', $4, $5, 0, $6, $7)`,
+        [
+          uuidv7(),
+          ref.variantId,
+          session.locationId,
+          -qty,
+          FIXTURE_STOCK_MILLI - qty,
+          sale.id,
+          session.cashierId,
+        ],
+      );
+      await db.query(
+        `UPDATE "StockLevel" SET "onHandMilli" = "onHandMilli" - $3
+          WHERE "variantId" = $1 AND "locationId" = $2`,
+        [ref.variantId, session.locationId, qty],
       );
     }
     await db.query(

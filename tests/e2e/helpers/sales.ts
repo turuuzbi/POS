@@ -43,10 +43,10 @@ export async function insertE2eSalesSet(): Promise<E2eSalesSet> {
       productId: string;
     }>(
       `SELECT r."locationId", r.id AS "registerId", u.id AS "userId",
-              (SELECT id FROM "User" WHERE role = 'MANAGER' LIMIT 1) AS "managerId",
+              (SELECT id FROM "User" WHERE role = 'MANAGER' AND email = 'manager@pos.local') AS "managerId",
               v.id AS "variantId", v."productId"
          FROM "Register" r, "User" u, "ProductVariant" v
-        WHERE u."role" = 'CASHIER' LIMIT 1`,
+        WHERE u."role" = 'CASHIER' AND u."name" = 'Болор' LIMIT 1`,
     );
     const found = rows[0];
     if (!found) throw new Error("e2e: seed data missing (run pnpm db:seed)");
