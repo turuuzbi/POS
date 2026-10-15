@@ -56,12 +56,18 @@ export interface TenderDialogProps {
   cashUnit: Money;
   /** Wire input for the given tenders (cart, approvals and saleId come from the parent). */
   buildInput: (tenders: readonly TenderDraft[]) => CheckoutInputWire;
-  charge: (input: CheckoutInputWire) => Promise<ActionResult<unknown>>;
+  charge?: (input: CheckoutInputWire) => Promise<ActionResult<unknown>>;
   saleId: string;
   /** An earlier attempt whose outcome is unknown, resent verbatim. */
   resume: CheckoutInputWire | null;
   onPending: (input: CheckoutInputWire | null) => void;
-  onSuccess: (result: CheckoutResult, tenders: readonly TenderDraft[]) => void;
+  onSuccess?: (result: CheckoutResult, tenders: readonly TenderDraft[]) => void;
+  /**
+   * Collect-only mode (exchange): once the balance is covered, hand the built
+   * input to the parent instead of sending it. The parent sends the sale
+   * itself, inside the refund that links it.
+   */
+  onCollected?: (input: CheckoutInputWire, tenders: readonly TenderDraft[]) => void;
   /**
    * The server rejected the prices / approvals; the parent reacts, then reopens.
    * DUPLICATE_SALE: this sale id was already recorded and this register did not
@@ -181,6 +187,7 @@ export function TenderDialog(props: TenderDialogProps) {
   }, []);
 
   const send = async (wire: CheckoutInputWire, used: readonly TenderDraft[]) => {
+    if (!props.charge) return;
     setSubmit({ kind: "sending" });
     setLastInput(wire);
     props.onPending(wire);
@@ -191,7 +198,7 @@ export function TenderDialog(props: TenderDialogProps) {
       if (outcome.result.replayed && !ours) {
         return props.onProblem("DUPLICATE_SALE");
       }
-      props.onSuccess(outcome.result, used);
+      props.onSuccess?.(outcome.result, used);
       return;
     }
     if (outcome.kind === "unknown") {
@@ -218,6 +225,10 @@ export function TenderDialog(props: TenderDialogProps) {
     const validation = validateTenders(payable, tenders, { cashUnit });
     if (!validation.ok) {
       setSubmit({ kind: "error", message: t("errors.tenders") });
+      return;
+    }
+    if (props.onCollected) {
+      props.onCollected(props.buildInput(tenders), tenders);
       return;
     }
     void send(props.buildInput(tenders), tenders);

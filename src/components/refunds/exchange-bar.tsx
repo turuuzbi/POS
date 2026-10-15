@@ -30,7 +30,6 @@ export function ExchangeBar({
   const { context, quote, payable } = exchange;
   if (!context) return null;
   const plan = quote?.kind === "ok" ? quote.plan : null;
-  const checkedOut = context.checkedOut !== null;
 
   return (
     <section
@@ -50,8 +49,6 @@ export function ExchangeBar({
             {t("retry")}
           </Button>
         </>
-      ) : checkedOut ? (
-        <span role="status">{t("paidPending")}</span>
       ) : (
         <dl className="flex flex-wrap gap-x-4 gap-y-1 tabular-nums">
           <div className="flex gap-1">
@@ -85,23 +82,21 @@ export function ExchangeBar({
       <div className="ml-auto flex items-center gap-2">
         <Button
           className="min-h-11"
-          disabled={disabled || (!checkedOut && (itemCount === 0 || plan === null))}
+          disabled={disabled || itemCount === 0 || plan === null}
           onClick={onFinish}
           data-testid="exchange-finish"
         >
-          {checkedOut ? t("completeRefund") : t("finish")}
+          {t("finish")}
         </Button>
-        {!checkedOut ? (
-          <Button
-            variant="outline"
-            className="min-h-11"
-            disabled={disabled}
-            onClick={onCancel}
-            data-testid="exchange-cancel"
-          >
-            {t("cancel")}
-          </Button>
-        ) : null}
+        <Button
+          variant="outline"
+          className="min-h-11"
+          disabled={disabled}
+          onClick={onCancel}
+          data-testid="exchange-cancel"
+        >
+          {t("cancel")}
+        </Button>
       </div>
     </section>
   );

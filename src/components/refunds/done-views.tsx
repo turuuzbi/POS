@@ -31,10 +31,13 @@ function CashBack({ amount, testId }: { amount: bigint; testId: string }) {
 /** After a committed refund: the cash to hand back, where the rest went, the receipt. */
 export function RefundDone({
   result,
+  changeDue = 0n,
   onAnother,
   onClose,
 }: {
   result: RefundResult;
+  /** Exchange only: change owed on the cash tendered for the replacement. */
+  changeDue?: bigint;
   onAnother: () => void;
   onClose: () => void;
 }) {
@@ -82,6 +85,12 @@ export function RefundDone({
             <dt>{t("netDue")}</dt>
             <dd className="tabular-nums">{format.money(result.exchange.netDue)}</dd>
           </div>
+          {changeDue > 0n ? (
+            <div className="flex justify-between gap-2" data-testid="done-change">
+              <dt>{t("changeDue")}</dt>
+              <dd className="tabular-nums">{format.money(changeDue)}</dd>
+            </div>
+          ) : null}
         </dl>
       ) : null}
       {restocked > 0 ? (
@@ -91,16 +100,29 @@ export function RefundDone({
         <p className="text-sm text-muted-foreground">{t("completesSale")}</p>
       ) : null}
 
-      <div className="grid gap-2 sm:grid-cols-3">
+      <div className={cn("grid gap-2", result.exchange ? "sm:grid-cols-2" : "sm:grid-cols-3")}>
         <Button variant="outline" size="lg" asChild>
           <Link
             href={`/receipt/refund/${result.refundId}`}
             target="_blank"
             rel="noopener noreferrer"
+            data-testid="done-refund-receipt"
           >
             <FileText aria-hidden /> {t("receipt")}
           </Link>
         </Button>
+        {result.exchange ? (
+          <Button variant="outline" size="lg" asChild>
+            <Link
+              href={`/receipt/${result.exchange.saleId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="done-sale-receipt"
+            >
+              <FileText aria-hidden /> {t("replacementReceipt")}
+            </Link>
+          </Button>
+        ) : null}
         <Button variant="outline" size="lg" onClick={onAnother}>
           {t("another")}
         </Button>

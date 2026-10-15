@@ -30,7 +30,6 @@ const context: ExchangeContext = {
     note: "",
     payout: { kind: "CUSTOM", entries: [{ method: "CASH", amount: 12_345n }] },
   },
-  checkedOut: { saleId: IDS.exchangeSale, payable: 1_500_000n },
 };
 
 describe("exchange context storage", () => {

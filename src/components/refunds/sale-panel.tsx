@@ -194,7 +194,6 @@ export function SalePanel(props: SalePanelProps) {
         saleId: sale.id,
         saleNumber: sale.number,
         draft: { ...draft, reason: draft.reason },
-        checkedOut: null,
       });
       return;
     }

@@ -83,7 +83,7 @@ export function useExchange(scope: string, role: Role, payable: Money) {
     [persist],
   );
 
-  const payableNow = context?.checkedOut?.payable ?? payable;
+  const payableNow = payable;
   const quote: Preview | null = useMemo(() => {
     if (!context || !remote || remote.sale.id !== context.saleId) return null;
     return previewRefund({

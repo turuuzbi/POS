@@ -20,7 +20,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { computeTotals, type Cart } from "@/domain/cart";
-import type { CheckoutInputWire, CheckoutResult } from "@/domain/checkout-contract";
+import type { CheckoutResult } from "@/domain/checkout-contract";
 import { DEFAULT_APPROVAL_POLICY, type ApprovalRequirement } from "@/domain/discounts";
 import { hasPermission, type Role } from "@/domain/permissions";
 import { isFractionalUnit, MILLI_PER_UNIT } from "@/domain/qty";
@@ -30,7 +30,7 @@ import { useBarcodeWedge } from "@/hooks/use-barcode-wedge";
 import { useOnline } from "@/hooks/use-online";
 import { usePosStore } from "@/hooks/use-pos-store";
 import { snapshotOf, type CatalogEntry } from "@/lib/pos/catalog-entry";
-import { buildCheckoutInput, type TenderDraft } from "@/lib/pos/charge";
+import { buildCheckoutInput } from "@/lib/pos/charge";
 import { storageScope, type HeldCart } from "@/lib/pos/hold-storage";
 import { createShortcutGuard } from "@/lib/pos/scan-burst";
 import {
@@ -342,8 +342,8 @@ function Selling({
   const startCharge = useCallback(() => {
     if (!online || store.conflict) return;
     if (exchangeContext) {
-      // An exchange finishes through its own flow: credit, net due, then the linked refund.
-      if (exchangeContext.checkedOut || locked) {
+      // An exchange finishes through its own flow: net due, then one atomic refund + sale.
+      if (locked) {
         setDialog({ type: "exchange" });
         return;
       }
@@ -566,17 +566,6 @@ function Selling({
       expectedPayable: totals.payable,
       approvals: approvalTokens(state, config),
     });
-
-  /** The replacement sale of an exchange: net-due tenders plus the credit as its own tender. */
-  const buildExchangeInput = (tenders: readonly TenderDraft[], credit: bigint) => {
-    const wire = buildInput(tenders);
-    return credit > 0n
-      ? ({
-          ...wire,
-          tenders: [...wire.tenders, { method: "EXCHANGE_CREDIT", amount: credit.toString() }],
-        } as unknown as CheckoutInputWire)
-      : wire;
-  };
 
   const activeLine =
     dialog && "lineId" in dialog && dialog.lineId ? lineOf(dialog.lineId) : undefined;
@@ -852,22 +841,16 @@ function Selling({
           exchange={exchange}
           cashUnit={cashUnitForRounding(config.totalRoundingUnit)}
           replacementSaleId={state.saleId}
-          buildCheckout={buildExchangeInput}
+          buildCheckout={buildInput}
           store={store}
           startAtTender={dialog.type === "tender" || locked}
-          onCheckedOut={(saleId, payable) => {
-            if (exchange.context)
-              exchange.update({ ...exchange.context, checkedOut: { saleId, payable } });
+          onCommitted={() => {
             store.newSale();
             setCartOpen(false);
           }}
           onProblem={async (kind) => {
             setDialog(null);
-            if (kind === "DUPLICATE_SALE") {
-              store.newSale();
-              setCartOpen(false);
-              setDialog({ type: "duplicate" });
-            } else if (kind === "STALE_PRICE") {
+            if (kind === "STALE_PRICE") {
               await refreshPrices();
               toast.warning(t("pending.pricesUpdated"));
             } else if (kind === "APPROVAL") {

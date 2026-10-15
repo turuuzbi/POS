@@ -7,17 +7,15 @@
  * it is needed again, never persisted.
  *
  * The replacement sale is the register's normal cart (`saleId` = the sale id
- * of the cart when the exchange is finished). Order of commits:
- *   1. the replacement checkout (tenders for the net due + the EXCHANGE_CREDIT
- *      tender for the credit applied), then
- *   2. the refund with `exchange: { saleId, expectedPayable }`, which links it.
- * Both are idempotent, so a crash between them is repaired by resending step 2
- * (`checkedOut` remembers that step 1 is done).
+ * of the cart when the exchange is finished). Finishing is ONE idempotent
+ * `refundAction` call: the refund (keyed by `refundId`) carries
+ * `exchange: { saleId, expectedPayable }` and `exchangeCheckout` (the cart's
+ * checkout input with tenders for the net due only); the service books the
+ * replacement sale and the refund in a single transaction.
  */
 import { z } from "zod";
 import { RETURN_REASONS } from "@/domain/refund";
 import { uuid, uuidV7 } from "@/domain/checkout-contract";
-import type { Money } from "@/domain/money";
 import { PAYOUT_METHODS, type Choices, type Draft, type PayoutChoice } from "./plan";
 
 const payoutSchema = z.discriminatedUnion("kind", [
@@ -43,8 +41,6 @@ export const exchangeContextSchema = z.object({
   reason: z.enum(RETURN_REASONS),
   note: z.string().max(500),
   payout: payoutSchema,
-  /** Step 1 is done: the replacement sale exists with this payable. */
-  checkedOut: z.object({ saleId: uuidV7, payable: z.string().regex(/^\d+$/) }).nullable(),
 });
 export type StoredExchange = z.output<typeof exchangeContextSchema>;
 
@@ -53,7 +49,6 @@ export interface ExchangeContext {
   saleId: string;
   saleNumber: string;
   draft: Draft & { reason: NonNullable<Draft["reason"]> };
-  checkedOut: { saleId: string; payable: Money } | null;
 }
 
 export function toStored(context: ExchangeContext): StoredExchange {
@@ -76,9 +71,6 @@ export function toStored(context: ExchangeContext): StoredExchange {
     reason: context.draft.reason,
     note: context.draft.note,
     payout,
-    checkedOut: context.checkedOut
-      ? { saleId: context.checkedOut.saleId, payable: context.checkedOut.payable.toString() }
-      : null,
   };
 }
 
@@ -99,9 +91,6 @@ export function fromStored(stored: StoredExchange): ExchangeContext {
     saleId: stored.saleId,
     saleNumber: stored.saleNumber,
     draft: { choices, reason: stored.reason, note: stored.note, payout },
-    checkedOut: stored.checkedOut
-      ? { saleId: stored.checkedOut.saleId, payable: BigInt(stored.checkedOut.payable) }
-      : null,
   };
 }
 
