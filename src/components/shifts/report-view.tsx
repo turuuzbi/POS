@@ -45,7 +45,7 @@ const PRINT_CSS = (paper: ReportPaper) => `@media print {
   html, body { background: #fff !important; color: #000 !important; margin: 0 !important; height: auto !important; overflow: visible !important; }
   body :not(.shift-print):not(:has(.shift-print)):not(.shift-print *) { display: none !important; }
   body :has(.shift-print) { position: static !important; transform: none !important; overflow: visible !important; max-height: none !important; height: auto !important; width: auto !important; max-width: none !important; display: block !important; inset: auto !important; padding: 0 !important; margin: 0 !important; border: 0 !important; box-shadow: none !important; background: none !important; }
-  .shift-print { width: ${paper === "80" ? "80mm" : "100%"} !important; max-width: none !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; padding: ${paper === "80" ? "4mm" : "0"} !important; background: #fff !important; color: #000 !important; }
+  .shift-print { width: ${paper === "80" ? "68mm" : "100%"} !important; max-width: none !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; padding: ${paper === "80" ? "2mm 1.5mm" : "0"} !important; font-size: ${paper === "80" ? "10px" : "inherit"} !important; overflow: hidden !important; background: #fff !important; color: #000 !important; }
   .shift-print * { color: #000 !important; }
 }`;
 

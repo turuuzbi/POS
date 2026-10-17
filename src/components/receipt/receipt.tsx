@@ -20,6 +20,14 @@ const PAPER_CSS: Record<ReceiptPaper, string> = {
   58: `@page { size: 58mm auto; margin: 0; }`,
 };
 
+/**
+ * Width the sheet really prints at. Thermal heads cannot print the full paper
+ * width (80 mm paper ~72 mm, 58 mm ~48 mm) and most drivers start at the left
+ * edge, so a sheet as wide as the paper loses its right-hand side (the
+ * amounts). Leave a few millimetres of safety inside the printable area.
+ */
+const PRINT_WIDTH_MM: Record<ReceiptPaper, number> = { 80: 68, 58: 46 };
+
 const SIZE_CLASS = { sm: "text-[11px]", md: "text-xs", lg: "text-sm" } as const;
 
 function RowView({ row }: { row: ReceiptRow }) {
@@ -96,7 +104,8 @@ export function ReceiptSheet({
       <style>{`@media print {
   ${PAPER_CSS[paper]}
   html, body { background: #fff !important; color: #000 !important; margin: 0 !important; }
-  .receipt-sheet { width: ${paper}mm !important; max-width: none !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; }
+  .receipt-sheet { width: ${PRINT_WIDTH_MM[paper]}mm !important; max-width: none !important; margin: 0 !important; padding: 2mm 1.5mm !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; overflow: hidden !important; }
+  .receipt-sheet * { max-width: 100%; }
 }`}</style>
       <article
         aria-label={label}
