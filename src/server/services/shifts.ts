@@ -137,10 +137,23 @@ function sameDenominations(stored: unknown, counts: Record<string, number>): boo
   return Object.keys(counts).every((k) => (s[k] ?? 0) === counts[k]);
 }
 
+/** Failed (note-less) closes a blind closer gets before a manager has to close the shift. */
+export const MAX_FAILED_CLOSE_ATTEMPTS = 5;
+const CLOSE_REJECTED_ACTION = "shift.close_rejected";
+
 /**
  * Close the register's open shift: count by denomination, compare with the
  * expected cash, freeze the Z report and mark the shift CLOSED in one
- * transaction. The Shift row is locked FOR UPDATE: a sale holds it FOR SHARE,
+ * transaction. `now` (closedAt / asOf of the Z report) is taken INSIDE the
+ * transaction, after the shift row lock: a sale that committed while we waited
+ * for the lock is in the report and never lies after its closedAt.
+ *
+ * Blind close. A caller without `reports.view` never sees the expected cash
+ * before closing. The one thing a failed close tells is "|variance| is above
+ * the note threshold" (VARIANCE_NOTE_REQUIRED), so such failures are counted per
+ * shift (audit rows, written in the same committed transaction as the lock) and
+ * after MAX_FAILED_CLOSE_ATTEMPTS only a manager can close
+ * (CLOSE_ATTEMPTS_EXCEEDED). The Shift row is locked FOR UPDATE: a sale holds it FOR SHARE,
  * so a racing sale either commits before the close (and is in the report) or
  * waits and then finds no OPEN shift (SHIFT_REQUIRED). Closing a closed shift
  * with the same count returns the stored result.
@@ -151,12 +164,13 @@ export async function closeShift(
   register: RegisterContext,
   meta: RequestMeta,
   client: PrismaClient = db,
-  now: Date = new Date(),
+  nowOverride?: Date,
 ): Promise<CloseShiftResult> {
   if (!can(user, "pos.shift.close", register.locationId)) {
     throw new ShiftFailure("PERMISSION_DENIED");
   }
-  return client.$transaction(async (tx) => {
+  const blind = !can(user, "reports.view", register.locationId);
+  const outcome = await client.$transaction(async (tx) => {
     const locked = await tx.$queryRaw<
       { id: string; registerId: string; locationId: string; status: "OPEN" | "CLOSED" }[]
     >`SELECT "id", "registerId", "locationId", "status" FROM "Shift"
@@ -183,6 +197,14 @@ export async function closeShift(
       return storedResult(closed, closed.zReport.number);
     }
 
+    if (blind) {
+      const failed = await tx.auditLog.count({
+        where: { action: CLOSE_REJECTED_ACTION, entityType: "Shift", entityId: row.id },
+      });
+      if (failed >= MAX_FAILED_CLOSE_ATTEMPTS) throw new ShiftFailure("CLOSE_ATTEMPTS_EXCEEDED");
+    }
+
+    const now = nowOverride ?? new Date();
     const reportInput = await loadShiftReportInput(tx, row.id, now);
     const expected = buildXReport(reportInput).cash.expected;
     const validated = validateCloseShift({
@@ -191,7 +213,24 @@ export async function closeShift(
       denominations: input.denominations,
       note: input.note,
     });
-    if (!validated.ok) failFromIssues(validated.issues);
+    if (!validated.ok) {
+      const error = shiftErrorFromIssues(validated.issues);
+      if (error.code === "VARIANCE_NOTE_REQUIRED") {
+        // Commit the attempt (a throw would roll it back), then fail after the transaction.
+        await audit(tx, {
+          actorId: user.id,
+          action: CLOSE_REJECTED_ACTION,
+          entityType: "Shift",
+          entityId: row.id,
+          locationId: register.locationId,
+          registerId: register.registerId,
+          meta: { deviceId: register.deviceId, blind },
+          ...meta,
+        });
+        return { rejected: error };
+      }
+      throw new ShiftFailure(error.code, error.details);
+    }
 
     const z = buildZReport(reportInput, {
       closedAt: now,
@@ -253,8 +292,11 @@ export async function closeShift(
       countedCash: validated.countedCash,
       cashVariance: validated.cashVariance,
       classification: validated.classification,
-    };
+    } satisfies CloseShiftResult;
   });
+  if ("rejected" in outcome)
+    throw new ShiftFailure(outcome.rejected.code, outcome.rejected.details);
+  return outcome;
 }
 
 function storedResult(
@@ -295,6 +337,8 @@ export async function recordCashMovement(
   now: Date = new Date(),
 ): Promise<CashMovementResult> {
   if (!can(user, "pos.sell", register.locationId)) throw new ShiftFailure("PERMISSION_DENIED");
+  // Blind close: the drawer total after the movement is for managers only.
+  const seesDrawer = can(user, "reports.view", register.locationId);
   return client.$transaction(async (tx) => {
     // Serialise duplicates of this movement id; a loser replays the winner.
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${input.movementId}, 1))`;
@@ -317,7 +361,7 @@ export async function recordCashMovement(
         movementId: existing.id,
         type: existing.type,
         amount: existing.amount,
-        expectedCashAfter: after.expected,
+        expectedCashAfter: seesDrawer ? after.expected : null,
         replayed: true,
       };
     }
@@ -395,7 +439,7 @@ export async function recordCashMovement(
       movementId: created.id,
       type: created.type,
       amount: created.amount,
-      expectedCashAfter: checked.expectedCashAfter,
+      expectedCashAfter: seesDrawer ? checked.expectedCashAfter : null,
       replayed: false,
     };
   });

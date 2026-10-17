@@ -11,7 +11,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { hasPermission, type Role } from "@/domain/permissions";
 import { CashDialog } from "./cash-dialog";
 import { CloseShiftDialog } from "./close-shift-dialog";
 import { XReportDialog } from "./x-report-dialog";
@@ -20,17 +19,15 @@ type Dialog = null | "x" | "cash" | "close";
 
 /**
  * The register header's Shift menu: X report, cash in/out, close shift. Cashiers
- * do a blind close: the expected cash stays hidden until they have counted.
+ * do a blind close: the server sends them no cash figures until the shift is closed.
  */
 export function ShiftMenu({
   shiftId,
-  role,
   heldCount,
   cartCount,
   charging,
 }: {
   shiftId: string;
-  role: Role;
   heldCount: number;
   cartCount: number;
   charging: boolean;
@@ -38,7 +35,6 @@ export function ShiftMenu({
   const t = useTranslations("shifts.menu");
   const router = useRouter();
   const [dialog, setDialog] = useState<Dialog>(null);
-  const seesExpected = hasPermission(role, "reports.view");
   const close = () => setDialog(null);
 
   return (
@@ -67,12 +63,7 @@ export function ShiftMenu({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <XReportDialog
-        open={dialog === "x"}
-        onClose={close}
-        shiftId={shiftId}
-        hideExpected={!seesExpected}
-      />
+      <XReportDialog open={dialog === "x"} onClose={close} shiftId={shiftId} />
       <CashDialog open={dialog === "cash"} onClose={close} />
       <CloseShiftDialog
         open={dialog === "close"}

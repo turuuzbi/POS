@@ -235,6 +235,8 @@ export interface ExchangeCredit {
    * returned goods afterwards and then re-checks the balances itself.
    */
   deferStockGuard?: boolean;
+  /** Variants the refund restocks afterwards: locked together with the sale's lines (one sorted pass). */
+  alsoLockVariantIds?: readonly string[];
 }
 
 /**
@@ -570,6 +572,9 @@ async function runCheckout(
         note: number,
         refs: { saleId: input.saleId },
         forbidNegative: !settings.allowNegativeStock && !exchangeCredit?.deferStockGuard,
+        ...(exchangeCredit?.alsoLockVariantIds
+          ? { alsoLock: exchangeCredit.alsoLockVariantIds }
+          : {}),
         lines: stockLines,
       });
     } catch (error) {

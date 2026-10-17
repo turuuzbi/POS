@@ -16,6 +16,9 @@ import {
   roundingUnit,
 } from "@/server/queries/register-sales";
 import { checkoutSale } from "@/server/services/checkout";
+import { creditNoteToken } from "@/server/services/credit-note-token";
+import { parseReceiptInput } from "@/lib/refunds/receipt-input";
+import { allLines, refundOk, sell as sellFx } from "../support/refund-fixtures";
 import { buildInput, createStockedProduct, createTill, lineOf } from "../support/checkout-fixtures";
 import { db, resetDatabase } from "../support/db";
 
@@ -33,6 +36,34 @@ async function sell(till: Awaited<ReturnType<typeof createTill>>, variantId: str
 describe("register sales queries (Returns screen)", () => {
   beforeEach(resetDatabase);
   afterAll(() => db.$disconnect());
+
+  it("finds the original sale from a printed /r/ link, a credit-note link and a refund id", async () => {
+    const till = await createTill();
+    const { variant } = await createStockedProduct(till, { price: 99_900n, cost: 40_000n });
+    const s = await sellFx(till, [{ variantId: variant.id, qtyMilli: 2000 }]);
+    const { result } = await refundOk(
+      till,
+      s.saleId,
+      allLines(s.lines).map((l) => ({ ...l, qtyMilli: 1000 })),
+      {},
+      till.manager,
+    );
+    const scope = { locationId: till.location.id, registerId: till.register.id };
+    const find = async (text: string) => {
+      const key = parseReceiptInput(text);
+      return key ? ((await findReturnSale(scope, key))?.id ?? null) : null;
+    };
+    expect(await find(`https://pos.example/r/${s.sale.publicToken}`)).toBe(s.saleId);
+    const credit = creditNoteToken("refund", result.refundId)!;
+    expect(await find(`https://pos.example/r/refund/${credit}`)).toBe(s.saleId);
+    expect(await find(`https://pos.example/receipt/refund/${result.refundId}`)).toBe(s.saleId);
+    // A void slip link of ANOTHER kind, or a forged one, finds nothing.
+    expect(
+      await find(`https://pos.example/r/void/${creditNoteToken("refund", result.refundId)!}`),
+    ).toBeNull();
+    const forged = `${credit.split(".")[0]}.${"A".repeat(43)}`;
+    expect(await find(`https://pos.example/r/refund/${forged}`)).toBeNull();
+  });
 
   it("finds a sale by number, share token and id, and the wire parses back to the same money", async () => {
     const till = await createTill();

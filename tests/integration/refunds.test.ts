@@ -1,4 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { getPaymentProvider, setPaymentProviderForTests } from "@/server/adapters/payments";
+import { setProviderRefundTimeoutForTests } from "@/server/services/provider-call";
 import { refundApprovalKeys } from "@/domain/refund-contract";
 import { refundCodeFromFailure } from "@/domain/refund-failure";
 import { runRefundFiscal } from "@/server/services/post-refund";
@@ -211,6 +213,59 @@ describe("refundSale", () => {
     expect((await db.paymentIntent.findUniqueOrThrow({ where: { id: intentId } })).status).toBe(
       "REFUNDED",
     );
+  });
+
+  it("a provider that answers too late rolls the refund back (retryable); the retry reuses the key", async () => {
+    const till = await createTill();
+    const { variant } = await createStockedProduct(till, { price: 100_000n });
+    const saleId = uuidv7();
+    const { intentId } = await paidQpayIntent(till, saleId, 100_000n);
+    const s = await sell(
+      till,
+      [{ variantId: variant.id }],
+      () => [{ method: "QPAY", amount: "100000", paymentIntentId: intentId }],
+      { saleId },
+    );
+    const real = getPaymentProvider();
+    const keys: (string | undefined)[] = [];
+    let slow = true;
+    setProviderRefundTimeoutForTests(50);
+    setPaymentProviderForTests({
+      ...real,
+      name: real.name,
+      createInvoice: (i) => real.createInvoice(i),
+      checkPayment: (r) => real.checkPayment(r),
+      refund: async (input) => {
+        keys.push(input.idempotencyKey);
+        const answer = await real.refund(input);
+        if (slow) await new Promise((r) => setTimeout(r, 400));
+        return answer;
+      },
+    });
+    try {
+      const ctx = till.ctx(till.manager);
+      const draft = await withTotal(refundInputOf(s.saleId, allLines(s.lines)), ctx);
+      const failure = await refundFailure(refundSale(draft, ctx));
+      expect(failure.failure).toBe("PAYMENT_PROVIDER_FAILED");
+      expect(failure.details).toMatchObject({ timedOut: true, retryable: true });
+      expect(await db.refund.count()).toBe(0);
+      expect(await db.stockMovement.count({ where: { type: "RETURN_RESTOCK" } })).toBe(0);
+      expect(await onHand(till, variant.id)).toBe(100_000 - 1000);
+      expect(
+        (await db.paymentIntent.findUniqueOrThrow({ where: { id: intentId } })).status,
+      ).not.toBe("REFUNDED");
+
+      slow = false;
+      const retried = await refundSale(draft, ctx);
+      expect(retried.created).toBe(true);
+      expect(keys).toHaveLength(2);
+      expect(keys[1]).toBe(keys[0]); // the provider replays the first answer, no second payout
+      expect(await db.refund.count()).toBe(1);
+      expect(await onHand(till, variant.id)).toBe(100_000);
+    } finally {
+      setPaymentProviderForTests(null);
+      setProviderRefundTimeoutForTests(null);
+    }
   });
 
   describe("approvals", () => {

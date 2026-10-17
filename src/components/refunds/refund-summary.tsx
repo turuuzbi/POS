@@ -45,8 +45,14 @@ function Row({
 export function RefundSummary({
   plan,
   replacementTotal,
+  hidePayout = false,
 }: {
   plan: RefundPlan | null;
+  /**
+   * Exchange chooser: the credit is not paid out (nothing is until the replacement is
+   * priced), so no payout rows and no "cash back" box that might be handed over.
+   */
+  hidePayout?: boolean;
   /** Exchange: payable of the replacement items (shown with credit / net due). */
   replacementTotal?: bigint;
 }) {
@@ -106,33 +112,35 @@ export function RefundSummary({
         </dl>
       ) : null}
 
-      <div className="space-y-1">
-        <p className="text-sm font-medium">{t("payout")}</p>
-        {rows.length > 0 ? (
-          <ul className="space-y-1 text-sm" data-testid="refund-payout">
-            {rows.map((row) => {
-              const Icon = ICONS[row.method];
-              return (
-                <li key={row.method} className="flex items-center justify-between gap-3">
-                  <span className="flex items-center gap-2">
-                    {Icon ? <Icon className="size-4 text-muted-foreground" aria-hidden /> : null}
-                    {tm(row.method)}
-                  </span>
-                  <span className="tabular-nums" data-testid={`payout-${row.method}`}>
-                    {format.money(row.amount)}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        ) : (
-          <p className="text-sm text-muted-foreground" data-testid="refund-payout">
-            {plan ? t("noPayout") : "—"}
-          </p>
-        )}
-      </div>
+      {hidePayout ? null : (
+        <div className="space-y-1">
+          <p className="text-sm font-medium">{t("payout")}</p>
+          {rows.length > 0 ? (
+            <ul className="space-y-1 text-sm" data-testid="refund-payout">
+              {rows.map((row) => {
+                const Icon = ICONS[row.method];
+                return (
+                  <li key={row.method} className="flex items-center justify-between gap-3">
+                    <span className="flex items-center gap-2">
+                      {Icon ? <Icon className="size-4 text-muted-foreground" aria-hidden /> : null}
+                      {tm(row.method)}
+                    </span>
+                    <span className="tabular-nums" data-testid={`payout-${row.method}`}>
+                      {format.money(row.amount)}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground" data-testid="refund-payout">
+              {plan ? t("noPayout") : "—"}
+            </p>
+          )}
+        </div>
+      )}
 
-      {plan && plan.cashRefund > 0n ? (
+      {!hidePayout && plan && plan.cashRefund > 0n ? (
         <div className="rounded-lg bg-success/15 px-3 py-3" role="status">
           <p className="text-sm">{t("cashBack")}</p>
           <p className="text-4xl font-bold tabular-nums" data-testid="refund-cash">

@@ -224,7 +224,12 @@ function Selling({
     }
   }, [state.cart, state.entries, config]);
 
-  const exchange = useExchange(storageScope(registerId, user.id), user.role, totals.payable);
+  const exchange = useExchange(
+    storageScope(registerId, user.id),
+    user.role,
+    totals.payable,
+    store.locked,
+  );
 
   const pending = useMemo(
     () => pendingApprovals(state, config, user.role, now),
@@ -588,7 +593,6 @@ function Selling({
             ) : null}
             <ShiftMenu
               shiftId={context.shift!.id}
-              role={user.role}
               heldCount={store.held.length}
               cartCount={itemCount}
               charging={locked}
@@ -822,12 +826,16 @@ function Selling({
           onClose={closeDialog}
           role={user.role}
           currentShiftId={context.shift?.id ?? null}
+          exchangeBlocked={locked}
           onStartExchange={(next, sale, meta) => {
             if (exchange.context) {
               toast.error(tr("exchange.alreadyOpen"));
               return;
             }
-            exchange.begin(next, sale, meta);
+            if (!exchange.begin(next, sale, meta)) {
+              toast.error(t("pending.locked"));
+              return;
+            }
             closeDialog();
             toast.success(tr("exchange.started"));
           }}
@@ -845,6 +853,8 @@ function Selling({
           store={store}
           startAtTender={dialog.type === "tender" || locked}
           onCommitted={() => {
+            // Booked: a reload on the done screen must not bring this exchange back.
+            if (exchange.context) exchange.update({ ...exchange.context, committed: true });
             store.newSale();
             setCartOpen(false);
           }}

@@ -46,12 +46,15 @@ export function ReturnsDialog({
   onClose,
   role,
   currentShiftId,
+  exchangeBlocked = false,
   onStartExchange,
 }: {
   onClose: () => void;
   role: Role;
   /** The register's open shift; voids are only possible for its sales. */
   currentShiftId: string | null;
+  /** The register cart holds an unconfirmed charge: no exchange can start on it. */
+  exchangeBlocked?: boolean;
   onStartExchange: (context: ExchangeContext, sale: ReturnSale, meta: SaleMeta) => void;
 }) {
   const t = useTranslations("refunds");
@@ -93,12 +96,12 @@ export function ReturnsDialog({
     sale: ReturnSale,
     check: { refundId: string | null; voided: boolean },
     next: "sale" | "void",
-  ) => {
+  ): Promise<"recorded" | "notRecorded" | "failed" | "reset"> => {
     setReloadFailed(false);
     const outcome = await lookupSale(sale.id);
     if (outcome.kind !== "found" || !outcome.result.sale) {
       setReloadFailed(true);
-      return;
+      return "failed";
     }
     const fresh = outcome.result.sale;
     if (check.refundId) {
@@ -106,8 +109,12 @@ export function ReturnsDialog({
       if (stored) {
         setBusy(false);
         setView({ name: "refunded", result: stored });
-        return;
+        return "recorded";
       }
+      // Not there (yet). A negative read proves nothing about a request that may still be
+      // committing, so the panel keeps its refund id and stays locked: only the same request
+      // can be resent, never a fresh one.
+      return "notRecorded";
     }
     if (check.voided && fresh.status === "VOIDED") {
       setBusy(false);
@@ -123,7 +130,7 @@ export function ReturnsDialog({
           replayed: true,
         },
       });
-      return;
+      return "recorded";
     }
     // A new epoch remounts the panel: fresh remaining quantities and a fresh refund id.
     setBusy(false);
@@ -133,6 +140,7 @@ export function ReturnsDialog({
         ? { name: "void", sale: fresh, meta, epoch: Date.now() }
         : { name: "sale", sale: fresh, meta, mode: "RETURN", epoch: Date.now() },
     );
+    return "reset";
   };
 
   return (
@@ -165,7 +173,8 @@ export function ReturnsDialog({
             setView({ name: "void", sale: view.sale, meta: view.meta, epoch: Date.now() })
           }
           onDone={(result) => setView({ name: "refunded", result })}
-          onReload={(refundId) => void reload(view.sale, { refundId, voided: false }, "sale")}
+          exchangeBlocked={exchangeBlocked}
+          onReload={(refundId) => reload(view.sale, { refundId, voided: false }, "sale")}
           onStartExchange={(context) => onStartExchange(context, view.sale, view.meta)}
           onBusy={setBusy}
         />

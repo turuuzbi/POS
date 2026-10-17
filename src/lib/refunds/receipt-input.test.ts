@@ -21,6 +21,40 @@ describe("parseReceiptInput", () => {
     });
   });
 
+  it("reads the real share link the receipts print: /r/<token>", () => {
+    const token = "Zk3_-9aB".repeat(5) + "abc"; // 43 base64url chars, like randomToken(32)
+    expect(token).toHaveLength(43);
+    expect(parseReceiptInput(`https://pos.example/r/${token}`)).toEqual({ kind: "token", token });
+    expect(parseReceiptInput(`http://localhost:3000/r/${token}?utm=x#y`)).toEqual({
+      kind: "token",
+      token,
+    });
+    expect(parseReceiptInput(`pos.example/r/${token}`)).toEqual({ kind: "token", token });
+    expect(parseReceiptInput("https://pos.example/r/short")).toBeNull();
+  });
+
+  it("recognises credit-note and void-slip links (resolved to the sale on the server)", () => {
+    const signed = `${"A".repeat(22)}.${"b".repeat(43)}`;
+    expect(parseReceiptInput(`https://pos.example/r/refund/${signed}`)).toEqual({
+      kind: "credit",
+      type: "refund",
+      token: signed,
+    });
+    expect(parseReceiptInput(`https://pos.example/r/void/${signed}?x=1`)).toEqual({
+      kind: "credit",
+      type: "void",
+      token: signed,
+    });
+    expect(parseReceiptInput(`https://pos.example/r/refund/${"A".repeat(43)}`)).toBeNull();
+    // The staff route of a credit note names a REFUND id, not a sale id.
+    const id = "01900000-0000-7000-8000-000000000001";
+    expect(parseReceiptInput(`https://pos.example/receipt/refund/${id}`)).toEqual({
+      kind: "refundId",
+      id,
+    });
+    expect(parseReceiptInput("https://pos.example/receipt/refund/nope")).toBeNull();
+  });
+
   it("accepts a bare sale id and a sale id inside a link", () => {
     const id = "01900000-0000-7000-8000-000000000001";
     expect(parseReceiptInput(id.toUpperCase())).toEqual({ kind: "id", id });

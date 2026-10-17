@@ -27,7 +27,7 @@ export interface ExchangeState {
  * reload (localStorage, per register + cashier); the original sale is
  * re-read from the server when it is not at hand.
  */
-export function useExchange(scope: string, role: Role, payable: Money) {
+export function useExchange(scope: string, role: Role, payable: Money, blocked = false) {
   const [context, setContext] = useState<ExchangeContext | null>(null);
   const [remote, setRemote] = useState<{ sale: ReturnSale; meta: SaleMeta } | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -74,13 +74,20 @@ export function useExchange(scope: string, role: Role, payable: Money) {
     [scope],
   );
 
+  /**
+   * Start an exchange on the register cart. Refused (false) while the cart is
+   * blocked, i.e. a charge is unconfirmed or the cart is locked: the pending
+   * charge must be resumed on the plain tender dialog, which an exchange hides.
+   */
   const begin = useCallback(
-    (next: ExchangeContext, sale: ReturnSale, meta: SaleMeta) => {
+    (next: ExchangeContext, sale: ReturnSale, meta: SaleMeta): boolean => {
+      if (blocked) return false;
       setRemote({ sale, meta });
       setLoadFailed(false);
       persist(next);
+      return true;
     },
-    [persist],
+    [persist, blocked],
   );
 
   const payableNow = payable;
@@ -107,6 +114,7 @@ export function useExchange(scope: string, role: Role, payable: Money) {
     quote,
     payable: payableNow,
     begin,
+    blocked,
     update: persist,
     clear: () => persist(null),
   };

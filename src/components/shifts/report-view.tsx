@@ -54,7 +54,7 @@ export function PrintableReport({
   report,
   meta,
   movements,
-  hideExpected = false,
+  hideCash = false,
   onRefresh,
   refreshing = false,
   className,
@@ -62,8 +62,8 @@ export function PrintableReport({
   report: ShiftReport;
   meta: ReportMeta;
   movements?: readonly ReportMovement[];
-  /** Blind close: the cashier does not see the expected cash before counting. */
-  hideExpected?: boolean;
+  /** Blind close (`ShiftDetail.blind`): no cash section at all, the server did not send its figures. */
+  hideCash?: boolean;
   onRefresh?: () => void;
   refreshing?: boolean;
   className?: string;
@@ -113,7 +113,7 @@ export function PrintableReport({
         meta={meta}
         movements={movements}
         paper={paper}
-        hideExpected={hideExpected}
+        hideCash={hideCash}
       />
     </div>
   );
@@ -170,13 +170,13 @@ export function ReportView({
   meta,
   movements,
   paper,
-  hideExpected = false,
+  hideCash = false,
 }: {
   report: ShiftReport;
   meta: ReportMeta;
   movements?: readonly ReportMovement[] | undefined;
   paper: ReportPaper;
-  hideExpected?: boolean;
+  hideCash?: boolean;
 }) {
   const t = useTranslations("shifts.report");
   const locale = useLocale();
@@ -293,20 +293,22 @@ export function ReportView({
       </Section>
 
       <Section title={t("cash")}>
-        <Row label={t("openingFloat")} value={money(report.cash.openingFloat)} />
-        <Row label={t("cashSales")} value={money(report.cash.cashSales)} />
-        <Row label={t("cashRefunds")} value={money(-report.cash.cashRefunds)} />
-        <Row label={t("cashIn")} value={money(report.cash.cashIn)} />
-        <Row label={t("cashOut")} value={money(-report.cash.cashOut)} />
-        {hideExpected && !z ? (
+        {hideCash && !z ? (
           <Row label={t("expectedCash")} value={t("expectedHidden")} strong />
         ) : (
-          <Row
-            label={t("expectedCash")}
-            value={money(report.cash.expected)}
-            strong
-            testId="expected-cash"
-          />
+          <>
+            <Row label={t("openingFloat")} value={money(report.cash.openingFloat)} />
+            <Row label={t("cashSales")} value={money(report.cash.cashSales)} />
+            <Row label={t("cashRefunds")} value={money(-report.cash.cashRefunds)} />
+            <Row label={t("cashIn")} value={money(report.cash.cashIn)} />
+            <Row label={t("cashOut")} value={money(-report.cash.cashOut)} />
+            <Row
+              label={t("expectedCash")}
+              value={money(report.cash.expected)}
+              strong
+              testId="expected-cash"
+            />
+          </>
         )}
       </Section>
 

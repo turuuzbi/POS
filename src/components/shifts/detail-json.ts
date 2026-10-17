@@ -29,6 +29,7 @@ const detailJsonSchema = z.object({
     zReportNumber: z.number().int().nullable(),
   }),
   report: shiftReportJsonSchema,
+  blind: z.boolean(),
   movements: z.array(
     z.object({
       id: z.string(),

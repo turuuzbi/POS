@@ -64,7 +64,24 @@ export interface ShiftDetail {
   /** The frozen Z report of a closed shift, the live X report of an open one. */
   report: ShiftReport;
   movements: ShiftMovementRow[];
+  /**
+   * Blind close: the viewer is a till without `reports.view` looking at its OPEN
+   * shift. `report.cash` is zeroed (the sections that reveal the expected drawer cash
+   * are not even sent), `shift.openingFloat` is 0 and `movements` is empty; sales and
+   * tenders are intact. Render no cash section for a blind detail.
+   */
+  blind: boolean;
 }
+
+const NO_CASH: ShiftReport["cash"] = {
+  openingFloat: 0n,
+  cashSales: 0n,
+  cashRefunds: 0n,
+  cashIn: 0n,
+  cashOut: 0n,
+  changeGiven: 0n,
+  expected: 0n,
+};
 
 /** Who is asking: the back office (reports.view) or the register that owns the shift. */
 export interface ShiftViewer {
@@ -117,7 +134,11 @@ export async function getShiftDetail(
           })
         : buildXReport(input);
   }
+  // Server-side blind close: nothing that adds up to the expected cash leaves the server.
+  const blind = !backOffice && row.status === "OPEN";
+  if (blind) report = { ...report, cash: NO_CASH };
   return {
+    blind,
     shift: {
       id: row.id,
       status: row.status,
@@ -129,15 +150,15 @@ export async function getShiftDetail(
       openedByName: row.openedBy.name,
       closedAt: row.closedAt,
       closedByName: row.closedBy?.name ?? null,
-      openingFloat: row.openingFloat,
-      expectedCash: row.expectedCash,
+      openingFloat: blind ? 0n : row.openingFloat,
+      expectedCash: blind ? null : row.expectedCash,
       countedCash: row.countedCash,
-      cashVariance: row.cashVariance,
+      cashVariance: blind ? null : row.cashVariance,
       closingNote: row.closingNote,
       zReportNumber: row.zReport?.number ?? null,
     },
     report,
-    movements: row.cashMovements.map((m) => ({
+    movements: (blind ? [] : row.cashMovements).map((m) => ({
       id: m.id,
       type: m.type,
       amount: m.amount,

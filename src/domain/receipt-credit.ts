@@ -120,7 +120,8 @@ export interface RefundReceiptModel {
   date: string;
   time: string;
   timeZone: string;
-  processedBy: string;
+  /** Staff only (`audience: "staff"`); null on the customer's slip / public link. */
+  processedBy: string | null;
   approvedBy: string | null;
   reason: ReturnReasonCode;
   lines: RefundReceiptLine[];
@@ -149,27 +150,42 @@ export interface RefundReceiptModel {
   footer: string[];
 }
 
-function cardDetail(p: {
-  reference?: string | null;
-  cardBrand?: string | null;
-  cardLast4?: string | null;
-}): string | null {
+/**
+ * Who a credit note / void slip is built for. `public` (the default, and what
+ * the unauthenticated share links and PDFs use) carries only what the customer
+ * needs: no staff or approver names and no payment references (bank / provider
+ * refs), only the card brand and the last four numbers. `staff` adds both.
+ */
+export type CreditAudience = "public" | "staff";
+
+function cardDetail(
+  p: {
+    reference?: string | null;
+    cardBrand?: string | null;
+    cardLast4?: string | null;
+  },
+  audience: CreditAudience,
+): string | null {
   const brand = cleanText(p.cardBrand);
   const last4 = cleanText(p.cardLast4);
   const card =
     brand && last4 ? `${brand} ****${last4}` : brand ? brand : last4 ? `****${last4}` : null;
-  return card ?? cleanText(p.reference);
+  return card ?? (audience === "staff" ? cleanText(p.reference) : null);
 }
 
-export function buildRefundReceiptModel(source: RefundReceiptSource): RefundReceiptModel {
+export function buildRefundReceiptModel(
+  source: RefundReceiptSource,
+  audience: CreditAudience = "public",
+): RefundReceiptModel {
   const { refund } = source;
+  const staff = audience === "staff";
   const timezone = cleanText(source.location.timezone) ?? DEFAULT_TIME_ZONE;
   const when = localDateTime(refund.occurredAt, timezone);
   const sorted = [...source.lines].sort((a, b) => a.lineNo - b.lineNo);
 
   const payouts: CreditPayout[] = source.payments
     .filter((p) => p.method !== "EXCHANGE_CREDIT")
-    .map((p) => ({ method: p.method, amount: p.amount, detail: cardDetail(p) }));
+    .map((p) => ({ method: p.method, amount: p.amount, detail: cardDetail(p, audience) }));
   const exchangeCredit = sum(
     source.payments.filter((p) => p.method === "EXCHANGE_CREDIT").map((p) => p.amount),
   );
@@ -183,8 +199,8 @@ export function buildRefundReceiptModel(source: RefundReceiptSource): RefundRece
     date: when.date,
     time: when.time,
     timeZone: when.timeZone,
-    processedBy: refund.processedByName,
-    approvedBy: cleanText(refund.approvedByName),
+    processedBy: staff ? refund.processedByName : null,
+    approvedBy: staff ? cleanText(refund.approvedByName) : null,
     reason: refund.reason,
     lines: sorted.map((line) => ({
       no: line.lineNo,
@@ -256,8 +272,9 @@ export interface VoidReceiptModel {
   voidDate: string;
   voidTime: string;
   timeZone: string;
-  cashier: string;
-  voidedBy: string;
+  /** Staff only (`audience: "staff"`); null on the customer's slip / public link. */
+  cashier: string | null;
+  voidedBy: string | null;
   approvedBy: string | null;
   reason: VoidReasonCode;
   lines: RefundReceiptLine[];
@@ -270,7 +287,11 @@ export interface VoidReceiptModel {
   footer: string[];
 }
 
-export function buildVoidReceiptModel(source: VoidReceiptSource): VoidReceiptModel {
+export function buildVoidReceiptModel(
+  source: VoidReceiptSource,
+  audience: CreditAudience = "public",
+): VoidReceiptModel {
+  const staff = audience === "staff";
   const timezone = cleanText(source.location.timezone) ?? DEFAULT_TIME_ZONE;
   const sale = localDateTime(source.sale.occurredAt, timezone);
   const voided = localDateTime(source.void.occurredAt, timezone);
@@ -278,7 +299,7 @@ export function buildVoidReceiptModel(source: VoidReceiptSource): VoidReceiptMod
   const reversals: CreditPayout[] = source.payments.map((p) => ({
     method: p.method,
     amount: p.amount,
-    detail: cardDetail(p),
+    detail: cardDetail(p, audience),
   }));
   return {
     kind: "VOID",
@@ -289,9 +310,9 @@ export function buildVoidReceiptModel(source: VoidReceiptSource): VoidReceiptMod
     voidDate: voided.date,
     voidTime: voided.time,
     timeZone: voided.timeZone,
-    cashier: source.sale.cashierName,
-    voidedBy: source.void.voidedByName,
-    approvedBy: cleanText(source.void.approvedByName),
+    cashier: staff ? source.sale.cashierName : null,
+    voidedBy: staff ? source.void.voidedByName : null,
+    approvedBy: staff ? cleanText(source.void.approvedByName) : null,
     reason: source.void.reason,
     lines: sorted.map((line) => ({
       no: line.lineNo,

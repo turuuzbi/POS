@@ -159,7 +159,9 @@ export function buildRefundReceiptRows(
     rows.push({ kind: "pair", left: labels.exchangeSaleNo, right: model.exchangeNumber });
   }
   rows.push({ kind: "pair", left: labels.date, right: `${model.date} ${model.time}` });
-  rows.push({ kind: "pair", left: labels.processedBy, right: model.processedBy });
+  if (model.processedBy) {
+    rows.push({ kind: "pair", left: labels.processedBy, right: model.processedBy });
+  }
   if (model.approvedBy) {
     rows.push({ kind: "pair", left: labels.approvedBy, right: model.approvedBy });
   }
@@ -236,8 +238,8 @@ export function buildVoidReceiptRows(
   rows.push({ kind: "pair", left: labels.receiptNo, right: model.number, bold: true });
   rows.push({ kind: "pair", left: labels.saleDate, right: `${model.saleDate} ${model.saleTime}` });
   rows.push({ kind: "pair", left: labels.voidDate, right: `${model.voidDate} ${model.voidTime}` });
-  rows.push({ kind: "pair", left: labels.cashier, right: model.cashier });
-  rows.push({ kind: "pair", left: labels.voidedBy, right: model.voidedBy });
+  if (model.cashier) rows.push({ kind: "pair", left: labels.cashier, right: model.cashier });
+  if (model.voidedBy) rows.push({ kind: "pair", left: labels.voidedBy, right: model.voidedBy });
   if (model.approvedBy) {
     rows.push({ kind: "pair", left: labels.approvedBy, right: model.approvedBy });
   }

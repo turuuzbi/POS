@@ -49,6 +49,14 @@ describe("exchange context storage", () => {
     expect(loadExchange(store, "reg:user")).toBeNull();
   });
 
+  it("drops a committed exchange on load (a reload on the done screen)", () => {
+    const store = memory();
+    saveExchange(store, "reg:user", { ...context, committed: true });
+    expect(store.data.has(exchangeKey("reg:user"))).toBe(true);
+    expect(loadExchange(store, "reg:user")).toBeNull();
+    expect(store.data.has(exchangeKey("reg:user"))).toBe(false); // gone for good
+  });
+
   it("ignores corrupt or foreign data and tolerates missing storage", () => {
     const store = memory();
     store.setItem(exchangeKey("s"), "{not json");

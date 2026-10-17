@@ -122,6 +122,8 @@
     "offline": "You are offline, so returns cannot be made.",
     "unknown": "We could not confirm whether the refund went through. “Send again” sends the very same refund, so the customer is never refunded twice.",
     "retry": "Send again",
+    "notRecordedYet": "The sale shows no such refund yet. It may still be processing, so the form stays locked. Press “Send again” (the very same refund, never a second one) or check again in a moment.",
+    "exchangeBlocked": "Exchange is not available while a payment on the cart is unconfirmed. Resolve the payment first.",
     "checkSale": "Check the sale",
     "void": "Void the sale",
     "refund": "Refund",

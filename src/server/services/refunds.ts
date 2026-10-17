@@ -30,14 +30,15 @@ import {
 import { cashUnitForRounding } from "@/domain/tender";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import { audit } from "../audit";
-import { getPaymentProvider } from "../adapters/payments";
 import { db, type Tx } from "../db";
 import { ActionError, type ActionErrorCode } from "../errors";
 import { checkApprovalToken } from "./approval-check";
 import { CheckoutFailure, checkoutInTransaction, type CheckoutContext } from "./checkout";
 import { confirmIntentPaid } from "./payments";
 import { nextSequenceValue } from "./sequence";
+import { ProviderTimeoutError, refundThroughProvider } from "./provider-call";
 import { postStockMovements } from "./stock";
+import { withTxRetry } from "../tx-retry";
 
 /**
  * Refund / return / exchange against an original sale
@@ -55,13 +56,23 @@ import { postStockMovements } from "./stock";
  * OVER_REFUND). Lock order: refund advisory -> original sale row -> shift
  * (FOR SHARE, like checkout) -> exchange sale advisory (checkout core) ->
  * sale/refund sequence rows -> payment intents -> stock levels.
+ * Every refund therefore takes the REFUND sequence row first (right after the
+ * approvals), then, for an exchange, the sale sequence row inside the checkout
+ * core, then ALL stock levels it will touch in one sorted pass (the sale's
+ * lines and the restocked variants together, `alsoLock`). Plain checkouts take
+ * sale sequence -> stock levels, voids sale row -> stock levels: the order is
+ * the same for everybody, so no cycle. Should Postgres still pick a deadlock
+ * victim (40P01 / P2034) the transaction is re-run (same refund id, idempotent).
  *
  * Shift. The refund is booked on the register's CURRENT open shift (cash paid
  * out leaves THAT drawer), not the original sale's shift.
  *
- * Provider payouts (QPay) run late in the transaction, after every database
- * check, with an idempotency key; a refusal rolls the refund back
- * (PAYMENT_PROVIDER_FAILED). Fiscal returns are issued after commit.
+ * Provider payouts (QPay) run last in the transaction, after every database
+ * check and write, with an idempotency key and a hard timeout
+ * (PROVIDER_REFUND_TIMEOUT_MS); a refusal or a timeout rolls the refund back
+ * (PAYMENT_PROVIDER_FAILED, details.retryable on a timeout) and the retry,
+ * carrying the same key, cannot pay out twice. Fiscal returns are issued after
+ * commit.
  *
  * Exchange. The replacement sale is created by the checkout core in the same
  * transaction with an EXCHANGE_CREDIT payment for the credit; the customer's
@@ -188,10 +199,12 @@ export async function refundSale(
   }
 
   try {
-    return await client.$transaction((tx) => runRefund(tx, input, fingerprint, options, ctx), {
-      maxWait: 15_000,
-      timeout: 30_000,
-    });
+    return await withTxRetry(() =>
+      client.$transaction((tx) => runRefund(tx, input, fingerprint, options, ctx), {
+        maxWait: 15_000,
+        timeout: 30_000,
+      }),
+    );
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       const winner = await client.refund.findUnique({
@@ -435,7 +448,13 @@ async function runRefund(
   // 6. Approvals, each bound to the exact value (scope builders in the contract).
   const approvers = await resolveApprovals(tx, input, plan, ctx);
 
-  // 7. Exchange: the replacement sale, in this transaction.
+  // 7. The refund number FIRST: the refund sequence row is the first sequence /
+  // stock lock of every refund (see the lock order above).
+  const locationCode = sale.location.code;
+  const number = `${locationCode}-R-${String(await nextSequenceValue(tx, `refund:${locationCode}`)).padStart(6, "0")}`;
+
+  // 8. Exchange: the replacement sale, in this transaction. It locks the stock
+  // levels of the returned goods together with its own lines.
   let exchangeSale: CheckoutResult | null = null;
   if (plan.exchange && options.exchangeCheckout) {
     exchangeSale = await createExchangeSale(
@@ -444,12 +463,11 @@ async function runRefund(
       input.refundId,
       plan.exchange.creditApplied,
       ctx,
+      [...new Set(plan.stockRestores.map((s) => s.variantId))],
     );
   }
 
-  // 8. Number, refund, lines.
-  const locationCode = sale.location.code;
-  const number = `${locationCode}-R-${String(await nextSequenceValue(tx, `refund:${locationCode}`)).padStart(6, "0")}`;
+  // 9. Refund, lines.
   const clientTime = new Date(input.createdAtClient);
   const occurredAt =
     Number.isFinite(clientTime.getTime()) &&
@@ -497,7 +515,7 @@ async function runRefund(
     })),
   });
 
-  // 9. Stock back at the original cost snapshot (ledger + cache, one transaction).
+  // 10. Stock back at the original cost snapshot (ledger + cache, one transaction).
   if (plan.stockRestores.length > 0) {
     await postStockMovements(tx, {
       locationId: sale.locationId,
@@ -516,11 +534,7 @@ async function runRefund(
     await assertExchangeStock(tx, exchangeSale.saleId, sale.locationId);
   }
 
-  // 10. Payouts (providers last), then the RefundPayment rows.
-  const paymentRows = await payOut(tx, sale, plan, input.refundId, exchangeSale?.saleId ?? null);
-  await tx.refundPayment.createMany({ data: paymentRows });
-
-  // 11. Audit.
+  // 11. Audit (cheap, before the provider so a slow provider holds locks as briefly as possible).
   await audit(tx, {
     actorId: user.id,
     action: "refund.create",
@@ -565,6 +579,10 @@ async function runRefund(
       ...ctx.meta,
     });
   }
+
+  // 12. Payouts: providers LAST (hard timeout, idempotency key), then the RefundPayment rows.
+  const paymentRows = await payOut(tx, sale, plan, input.refundId, exchangeSale?.saleId ?? null);
+  await tx.refundPayment.createMany({ data: paymentRows });
 
   return {
     result: refundResultFromPlan(input, number, plan, false),
@@ -635,6 +653,7 @@ async function createExchangeSale(
   refundId: string,
   credit: bigint,
   ctx: CheckoutContext,
+  restockVariantIds: readonly string[],
 ): Promise<CheckoutResult> {
   if (await tx.sale.findUnique({ where: { id: checkout.saleId }, select: { id: true } })) {
     throw new RefundFailure("EXCHANGE_INVALID", { reason: "EXCHANGE_SALE_EXISTS" });
@@ -644,6 +663,7 @@ async function createExchangeSale(
       refundId,
       amount: credit,
       deferStockGuard: true,
+      alsoLockVariantIds: restockVariantIds,
     });
   } catch (error) {
     if (error instanceof CheckoutFailure) {
@@ -719,14 +739,20 @@ async function payOut(
       }
       let outcome;
       try {
-        outcome = await getPaymentProvider().refund({
+        outcome = await refundThroughProvider({
           providerRef: intent.providerRef,
           amount: payment.amount,
           reason: "refund",
           idempotencyKey: `refund:${refundId}:${original.id}`,
         });
-      } catch {
-        throw new RefundFailure("PAYMENT_PROVIDER_FAILED", { method: "QPAY" });
+      } catch (error) {
+        // A timeout is retryable as is: the same key reaches the provider again.
+        throw new RefundFailure(
+          "PAYMENT_PROVIDER_FAILED",
+          error instanceof ProviderTimeoutError
+            ? { method: "QPAY", timedOut: true, retryable: true }
+            : { method: "QPAY" },
+        );
       }
       if (outcome.status !== "REFUNDED") {
         throw new RefundFailure("PAYMENT_PROVIDER_FAILED", { method: "QPAY" });

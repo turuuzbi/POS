@@ -68,8 +68,15 @@ export interface SalePanelProps {
   onBack: () => void;
   onVoid: () => void;
   onDone: (result: RefundResult) => void;
-  /** Re-read the sale (after a stale error or an unknown outcome). */
-  onReload: (checkRefundId: string | null) => void;
+  /**
+   * Re-read the sale (after a stale error or an unknown outcome). With a refund id it
+   * answers whether that refund is recorded; "notRecorded" keeps this panel (and its id).
+   */
+  onReload: (
+    checkRefundId: string | null,
+  ) => Promise<"recorded" | "notRecorded" | "failed" | "reset">;
+  /** The register cart holds an unconfirmed charge: Exchange is unavailable. */
+  exchangeBlocked?: boolean;
   /** Exchange: hand the chosen lines to the register cart. */
   onStartExchange: (context: ExchangeContext) => void;
   /** Lock the surrounding dialog while a request is in flight or unresolved. */
@@ -106,7 +113,9 @@ export function SalePanel(props: SalePanelProps) {
   const state = saleState(sale);
   const closed = state === "VOIDED" || state === "REFUNDED";
   const frozen = submit.kind !== "idle";
-  const exchange = mode === "EXCHANGE";
+  const exchangeBlocked = props.exchangeBlocked ?? false;
+  const exchange = mode === "EXCHANGE" && !exchangeBlocked;
+  const [notRecorded, setNotRecorded] = useState(false);
 
   const preview: Preview = useMemo(
     () =>
@@ -188,7 +197,7 @@ export function SalePanel(props: SalePanelProps) {
   const onPrimary = () => {
     if (!ready || preview.kind !== "ok" || frozen) return;
     if (exchange) {
-      if (draft.reason === null) return;
+      if (draft.reason === null || exchangeBlocked) return;
       props.onStartExchange({
         refundId,
         saleId: sale.id,
@@ -270,8 +279,14 @@ export function SalePanel(props: SalePanelProps) {
                   role="radio"
                   aria-checked={mode === value}
                   variant={mode === value ? "default" : "outline"}
-                  disabled={frozen}
-                  onClick={() => setMode(value)}
+                  disabled={frozen || (value === "EXCHANGE" && exchangeBlocked)}
+                  onClick={() => {
+                    setMode(value);
+                    // The payout picker is hidden in exchange mode: do not keep a stale choice.
+                    if (value === "EXCHANGE" && draft.payout.kind !== "ORIGINAL") {
+                      update({ ...draft, payout: { kind: "ORIGINAL" } });
+                    }
+                  }}
                   data-testid={`mode-${value}`}
                 >
                   {t(`panel.mode.${value}`)}
@@ -281,6 +296,11 @@ export function SalePanel(props: SalePanelProps) {
             <p className="text-sm text-muted-foreground">
               {exchange ? t("panel.exchangeHint") : t("panel.returnHint")}
             </p>
+            {exchangeBlocked ? (
+              <p role="status" className="text-sm text-destructive" data-testid="exchange-blocked">
+                {t("panel.exchangeBlocked")}
+              </p>
+            ) : null}
             <ul className="space-y-2" data-testid="return-lines">
               {sale.lines.map((line) => {
                 const lineProgress = progress.get(line.id);
@@ -358,7 +378,7 @@ export function SalePanel(props: SalePanelProps) {
               />
             ) : null}
 
-            <RefundSummary plan={plan} />
+            <RefundSummary plan={plan} hidePayout={exchange} />
 
             {preview.kind === "ok" && preview.needed.length > 0 && !exchange ? (
               <div
@@ -413,7 +433,7 @@ export function SalePanel(props: SalePanelProps) {
           >
             <p>{failureText(problem)}</p>
             {isStale(problem) ? (
-              <Button type="button" variant="outline" onClick={() => onReload(null)}>
+              <Button type="button" variant="outline" onClick={() => void onReload(null)}>
                 {t("panel.reload")}
               </Button>
             ) : null}
@@ -440,10 +460,20 @@ export function SalePanel(props: SalePanelProps) {
               <Button type="button" onClick={() => void send(submit.input)}>
                 {t("panel.retry")}
               </Button>
-              <Button type="button" variant="outline" onClick={() => onReload(refundId)}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={async () => {
+                  setNotRecorded(false);
+                  if ((await onReload(refundId)) === "notRecorded") setNotRecorded(true);
+                }}
+              >
                 {t("panel.checkSale")}
               </Button>
             </div>
+            {notRecorded ? (
+              <p data-testid="refund-not-recorded">{t("panel.notRecordedYet")}</p>
+            ) : null}
           </div>
         ) : null}
       </div>

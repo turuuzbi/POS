@@ -77,7 +77,7 @@ const texts = (rows: ReceiptRow[]) =>
 
 describe("refund receipt model", () => {
   it("shows a split-tender refund with cash returned and card detail", () => {
-    const model = buildRefundReceiptModel(refundSource());
+    const model = buildRefundReceiptModel(refundSource(), "staff");
     expect(model.kind).toBe("REFUND");
     expect(model.number).toBe("UB1-R-000045");
     expect(model.originalNumber).toBe("UB1-000123");
@@ -183,7 +183,7 @@ describe("refund receipt model", () => {
 
 describe("refund receipt layout", () => {
   it("starts with the credit-note title and lists the facts, in both languages", () => {
-    const model = buildRefundReceiptModel(refundSource());
+    const model = buildRefundReceiptModel(refundSource(), "staff");
     const mnRows = texts(buildRefundReceiptRows(model, makeCreditLabels(tMn), { locale: "mn" }));
     expect(mnRows).toContain("ХЭРЭГЛЭГЧИЙН БУЦААЛТ");
     expect(mnRows).toContain("Анхны баримт №|UB1-000123");
@@ -214,6 +214,7 @@ describe("refund receipt layout", () => {
   it("omits the approver row when nobody approved", () => {
     const model = buildRefundReceiptModel(
       refundSource({ refund: { ...refundSource().refund, approvedByName: null } }),
+      "staff",
     );
     const rows = texts(buildRefundReceiptRows(model, makeCreditLabels(tMn), { locale: "mn" }));
     expect(rows.some((r) => r.startsWith("Зөвшөөрсөн|"))).toBe(false);
@@ -319,5 +320,40 @@ describe("refunded banner on the original receipt", () => {
     expect(rows.filter((r) => r.kind === "banner")).toEqual([
       { kind: "banner", text: "ХҮЧИНГҮЙ БОЛГОСОН" },
     ]);
+  });
+});
+
+describe("public audience (share links, PDFs)", () => {
+  const withRefs = refundSource({
+    payments: [
+      { method: "BANK_TRANSFER", amount: 400_000n, reference: "TRX-SECRET-77" },
+      { method: "CARD", amount: 600_000n, cardBrand: "VISA", cardLast4: "4242" },
+    ],
+  });
+
+  it("a credit note carries no staff or approver names and no payment references", () => {
+    const model = buildRefundReceiptModel(withRefs);
+    expect(model).toMatchObject({ processedBy: null, approvedBy: null });
+    expect(model.payouts.map((p) => p.detail)).toEqual([null, "VISA ****4242"]);
+    const text = JSON.stringify(model, (_k, v) => (typeof v === "bigint" ? v.toString() : v));
+    expect(text).not.toMatch(/Болор|Менежер|TRX-SECRET-77/);
+    const rows = texts(buildRefundReceiptRows(model, makeCreditLabels(tMn), { locale: "mn" }));
+    expect(rows.some((r) => r.startsWith("Зөвшөөрсөн|") || r.startsWith("Буцаасан кассчин|"))).toBe(
+      false,
+    );
+    // Staff keep both.
+    const staff = buildRefundReceiptModel(withRefs, "staff");
+    expect(staff).toMatchObject({ processedBy: "Болор", approvedBy: "Менежер" });
+    expect(staff.payouts[0]!.detail).toBe("TRX-SECRET-77");
+  });
+
+  it("a void slip carries no cashier, voided-by or approver", () => {
+    const model = buildVoidReceiptModel(voidSource());
+    expect(model).toMatchObject({ cashier: null, voidedBy: null, approvedBy: null });
+    expect(
+      JSON.stringify(model, (_k, v) => (typeof v === "bigint" ? v.toString() : v)),
+    ).not.toMatch(/Болор|Менежер/);
+    const staff = buildVoidReceiptModel(voidSource(), "staff");
+    expect(staff).toMatchObject({ cashier: "Болор", voidedBy: "Болор", approvedBy: "Менежер" });
   });
 });

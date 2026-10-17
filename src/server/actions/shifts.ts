@@ -59,6 +59,7 @@ export const cashMovementAction = defineAction({
   input: cashMovementInputSchema,
   async run({ input, user, meta }): Promise<unknown> {
     const register = await requireRegisterContext(user);
+    // expectedCashAfter is null for callers without reports.view (blind close).
     const result: CashMovementResult = await recordCashMovement(input, user, register, meta);
     return toWire(result);
   },
@@ -67,7 +68,9 @@ export const cashMovementAction = defineAction({
 /**
  * The shift's report for the register: the live X report of the open shift,
  * the frozen Z report of a closed one. Read-only; only for this register's
- * own shifts. JSON-safe (money as decimal strings, dates as ISO strings).
+ * own shifts. JSON-safe (money as decimal strings, dates as ISO strings). For a
+ * caller without `reports.view` the OPEN shift's detail is blind (see
+ * `ShiftDetail.blind`): no expected cash, no cash components, no variance.
  */
 export const shiftReportAction = defineAction({
   name: "shifts.report",

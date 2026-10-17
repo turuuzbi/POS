@@ -19,6 +19,15 @@ function kindOf(choice: PayoutChoice): Kind {
   return choice.kind;
 }
 
+/** The per-method text boxes for a choice (a remount must not blank a stored split). */
+export function initialPayoutText(choice: PayoutChoice): Record<PayoutMethod, string> {
+  const text: Record<PayoutMethod, string> = { CASH: "", CARD: "", QPAY: "", BANK_TRANSFER: "" };
+  if (choice.kind === "CUSTOM") {
+    for (const entry of choice.entries) text[entry.method] = moneyToInput(entry.amount);
+  }
+  return text;
+}
+
 /**
  * Where the refund goes. The default is the original tenders (proportional,
  * no approval). A manager may send it all to cash or bank transfer, or split
@@ -40,12 +49,7 @@ export function PayoutEditor({
   const t = useTranslations("refunds.payout");
   const tm = useTranslations("refunds.method");
   const format = useFormat();
-  const [text, setText] = useState<Record<PayoutMethod, string>>({
-    CASH: "",
-    CARD: "",
-    QPAY: "",
-    BANK_TRANSFER: "",
-  });
+  const [text, setText] = useState<Record<PayoutMethod, string>>(() => initialPayoutText(choice));
   const groupId = useId();
   const kind = kindOf(choice);
 

@@ -16,12 +16,13 @@ import {
 import { planVoid, type VoidPlan } from "@/domain/void";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import { audit } from "../audit";
-import { getPaymentProvider } from "../adapters/payments";
 import { db, type Tx } from "../db";
 import { ActionError, type ActionErrorCode } from "../errors";
 import { checkApprovalToken } from "./approval-check";
 import type { CheckoutContext } from "./checkout";
+import { ProviderTimeoutError, refundThroughProvider } from "./provider-call";
 import { postStockMovements } from "./stock";
+import { withTxRetry } from "../tx-retry";
 
 /**
  * Voiding a sale (docs/shifts-refunds-domain.md).
@@ -37,9 +38,10 @@ import { postStockMovements } from "./stock";
  * waits for us, or we see it CLOSED). The void is keyed by the sale id, so
  * duplicates serialise on the sale lock and the loser replays the stored void.
  *
- * Provider calls (QPay refund) happen last inside the transaction: a refusal
- * rolls everything back (nothing half-voided). The provider call carries an
- * idempotency key so a retry after a rollback cannot refund twice.
+ * Provider calls (QPay refund) happen last inside the transaction, with a hard
+ * timeout: a refusal or timeout rolls everything back (nothing half-voided;
+ * details.retryable on a timeout). The provider call carries an idempotency key
+ * so a retry after a rollback cannot refund twice.
  */
 
 export class VoidFailure extends ActionError {
@@ -107,10 +109,12 @@ export async function voidSale(
   }
   const fingerprint = voidFingerprint(input);
   try {
-    return await client.$transaction((tx) => runVoid(tx, input, fingerprint, ctx), {
-      maxWait: 15_000,
-      timeout: 30_000,
-    });
+    return await withTxRetry(() =>
+      client.$transaction((tx) => runVoid(tx, input, fingerprint, ctx), {
+        maxWait: 15_000,
+        timeout: 30_000,
+      }),
+    );
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       // Someone committed the void of this sale between our lock and insert.
@@ -348,14 +352,20 @@ async function reversePayments(
       }
       let refund;
       try {
-        refund = await getPaymentProvider().refund({
+        refund = await refundThroughProvider({
           providerRef: intent.providerRef,
           amount: reversal.amount,
           reason: "void",
           idempotencyKey: `void:${sale.id}:${original.id}`,
         });
-      } catch {
-        throw new VoidFailure("VOID_NOT_ALLOWED", { reason: "PAYMENT_PROVIDER_FAILED" });
+      } catch (error) {
+        // A timeout is retryable as is: the same key reaches the provider again.
+        throw new VoidFailure(
+          "VOID_NOT_ALLOWED",
+          error instanceof ProviderTimeoutError
+            ? { reason: "PAYMENT_PROVIDER_FAILED", timedOut: true, retryable: true }
+            : { reason: "PAYMENT_PROVIDER_FAILED" },
+        );
       }
       if (refund.status !== "REFUNDED") {
         throw new VoidFailure("VOID_NOT_ALLOWED", { reason: "PAYMENT_PROVIDER_FAILED" });

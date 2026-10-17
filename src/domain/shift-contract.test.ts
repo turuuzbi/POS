@@ -143,6 +143,11 @@ describe("results", () => {
       replayed: false,
     };
     expect(cashMovementResultSchema.parse(JSON.parse(JSON.stringify(toWire(mv))))).toEqual(mv);
+    // A blind caller (no reports.view) gets no drawer total.
+    const blind = { ...mv, expectedCashAfter: null };
+    expect(cashMovementResultSchema.parse(JSON.parse(JSON.stringify(toWire(blind))))).toEqual(
+      blind,
+    );
   });
 });
 

@@ -3,6 +3,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import type { PaymentMethod } from "@/domain/refund";
 import type { ReceiptKey } from "@/lib/refunds/receipt-input";
 import { db } from "../db";
+import { verifyCreditNoteToken } from "../services/credit-note-token";
 
 /**
  * Sales as the register's Returns screen reads them. Everything is scoped to
@@ -186,6 +187,9 @@ export function toReturnSale(row: DetailRow, movedVariants: ReadonlySet<string>)
   };
 }
 
+/** A UUID that is no sale: the filter for a link that did not verify. */
+const NO_SALE = "00000000-0000-0000-0000-000000000000";
+
 function keyFilter(key: ReceiptKey): Prisma.SaleWhereInput {
   switch (key.kind) {
     case "number":
@@ -194,6 +198,14 @@ function keyFilter(key: ReceiptKey): Prisma.SaleWhereInput {
       return { publicToken: key.token };
     case "id":
       return { id: key.id };
+    case "refundId":
+      return { refunds: { some: { id: key.id } } };
+    case "credit": {
+      // A signed credit-note / void-slip link: only a valid signature names a sale.
+      const id = verifyCreditNoteToken(key.type, key.token);
+      if (!id) return { id: NO_SALE };
+      return key.type === "refund" ? { refunds: { some: { id } } } : { id };
+    }
   }
 }
 

@@ -237,6 +237,48 @@ describe("voidSale", () => {
       expect((row.reversals as { reference: string }[])[0]!.reference).toMatch(/^mockrefund_/);
     });
 
+    it("rolls everything back (retryable) when the provider answers too late", async () => {
+      const till = await createTill();
+      const { variant } = await createStockedProduct(till, { price: 100_000n });
+      const saleId = uuidv7();
+      const { intentId } = await paidQpayIntent(till, saleId, 100_000n);
+      const s = await sell(
+        till,
+        [{ variantId: variant.id }],
+        () => [{ method: "QPAY", amount: "100000", paymentIntentId: intentId }],
+        { saleId },
+      );
+      const { getPaymentProvider, setPaymentProviderForTests } =
+        await import("@/server/adapters/payments");
+      const { setProviderRefundTimeoutForTests } = await import("@/server/services/provider-call");
+      const real = getPaymentProvider();
+      setProviderRefundTimeoutForTests(50);
+      setPaymentProviderForTests({
+        ...real,
+        name: real.name,
+        createInvoice: (i) => real.createInvoice(i),
+        checkPayment: (r) => real.checkPayment(r),
+        refund: async (input) => {
+          const answer = await real.refund(input);
+          await new Promise((r) => setTimeout(r, 400));
+          return answer;
+        },
+      });
+      try {
+        const failure = await voidFailure(doVoid(till, s.saleId, {}, till.manager));
+        expect(failure.failure).toBe("VOID_NOT_ALLOWED");
+        expect(failure.details).toMatchObject({ timedOut: true, retryable: true });
+        expect(await db.saleVoid.count()).toBe(0);
+        expect(await onHand(till, variant.id)).toBe(100_000 - 1000);
+      } finally {
+        setPaymentProviderForTests(null);
+        setProviderRefundTimeoutForTests(null);
+      }
+      // The retry (same key) goes through and does not pay out twice.
+      await doVoid(till, s.saleId, {}, till.manager);
+      expect(await db.saleVoid.count()).toBe(1);
+    });
+
     it("rolls everything back when the provider refuses", async () => {
       const till = await createTill();
       const { variant } = await createStockedProduct(till, { price: 100_000n });

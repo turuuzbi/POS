@@ -80,8 +80,13 @@ describe("refund receipt (credit note)", () => {
     expect(model.number).toBe("UB1-R-000045");
     expect(model.originalNumber).toBe("UB1-000123");
     expect(model.header.businessName).toBe("Номин Маркет");
-    expect(model.processedBy).toBe(context.cashierName);
-    expect(model.approvedBy).toBe(manager.name);
+    // The public link shows no staff names; the staff view keeps them.
+    expect(model).toMatchObject({ processedBy: null, approvedBy: null });
+    expect(json(model)).not.toContain(manager.name);
+    expect(json(model)).not.toContain(context.cashierName);
+    const staff = await getRefundReceiptForStaff(refund.id, () => true);
+    expect(staff!.model.processedBy).toBe(context.cashierName);
+    expect(staff!.model.approvedBy).toBe(manager.name);
     expect(model.reason).toBe("DAMAGED");
     expect(model.date).toBe("2026-10-15"); // 18:30Z is the next morning in Ulaanbaatar
     expect(model.time).toBe("02:30");
@@ -223,8 +228,11 @@ describe("void slip", () => {
     const token = creditNoteToken("void", sale.id)!;
     const { model } = (await getVoidReceiptByToken(token))!;
     expect(model.number).toBe("UB1-000400");
-    expect(model.voidedBy).toBe(context.cashierName);
-    expect(model.approvedBy).toBe(manager.name);
+    expect(model).toMatchObject({ cashier: null, voidedBy: null, approvedBy: null });
+    expect(json(model)).not.toContain(manager.name);
+    const staff = await getVoidReceiptForStaff(sale.id, anywhere);
+    expect(staff!.model.voidedBy).toBe(context.cashierName);
+    expect(staff!.model.approvedBy).toBe(manager.name);
     expect(model.reason).toBe("ENTRY_ERROR");
     expect(model.reversals.map((r) => r.method)).toEqual(["CARD", "CASH"]);
     expect(model.cashReturned).toBe(850_200n);

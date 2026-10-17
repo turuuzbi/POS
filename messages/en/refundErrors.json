@@ -61,6 +61,7 @@
       "SHIFT_ALREADY_OPEN": "A shift is already open on this register.",
       "DENOMINATIONS_INVALID": "The denomination counts are invalid. Check and enter them again.",
       "VARIANCE_NOTE_REQUIRED": "The cash variance is large. Add a note.",
+      "CLOSE_ATTEMPTS_EXCEEDED": "Too many failed attempts to close this shift. A manager must close it.",
       "NOTE_TOO_LONG": "The note is too long.",
       "AMOUNT_NOT_POSITIVE": "The amount must be greater than zero.",
       "AMOUNT_TOO_LARGE": "The amount is too large.",

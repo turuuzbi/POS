@@ -1,9 +1,17 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { refundSale, RefundFailure } from "@/server/services/refunds";
 import { findLedgerMismatches } from "@/server/services/stock";
-import { createStockedProduct, createTill } from "../support/checkout-fixtures";
+import { buildInput, createStockedProduct, createTill, lineOf } from "../support/checkout-fixtures";
 import { db, resetDatabase } from "../support/db";
-import { onHand, refundInputOf, sell, withTotal } from "../support/refund-fixtures";
+import {
+  allLines,
+  onHand,
+  quotePayable,
+  refundInputOf,
+  sell,
+  uuidv7,
+  withTotal,
+} from "../support/refund-fixtures";
 
 const PARALLEL = 20;
 const sum = (xs: bigint[]) => xs.reduce((a, b) => a + b, 0n);
@@ -145,6 +153,54 @@ describe("refund concurrency", () => {
     }
     const refunds = await db.refund.findMany();
     expect(sum(refunds.map((r) => r.totalAmount))).toBe(s.sale.totalAmount);
+    expect(await findLedgerMismatches(db)).toEqual([]);
+  });
+
+  it("exchanges and plain refunds on the same variants never deadlock (one lock order)", async () => {
+    const till = await createTill();
+    const a = await createStockedProduct(till, { price: 100_000n });
+    const b = await createStockedProduct(till, { price: 100_000n });
+    const ctx = till.ctx(till.manager);
+    const ROUNDS = 6;
+    // Each round: an exchange that gives back A and takes B, a plain return of
+    // B and an exchange that gives back B and takes A, all at once.
+    const jobs: Promise<unknown>[] = [];
+    for (let i = 0; i < ROUNDS; i++) {
+      const soldA = await sell(till, [{ variantId: a.variant.id }]);
+      const soldB = await sell(till, [{ variantId: b.variant.id }]);
+      const soldB2 = await sell(till, [{ variantId: b.variant.id }]);
+      const exchange = async (sold: typeof soldA, takes: string) => {
+        const lines = [lineOf(takes, 1000)];
+        const payable = await quotePayable(lines);
+        const saleId = uuidv7();
+        const checkout = buildInput({
+          saleId,
+          lines,
+          expectedPayable: payable.toString(),
+          tenders: [],
+        });
+        const options = { exchangeCheckout: checkout };
+        const input = await withTotal(
+          refundInputOf(sold.saleId, allLines(sold.lines), {
+            exchange: { saleId, expectedPayable: payable.toString() },
+          }),
+          ctx,
+          options,
+        );
+        return refundSale(input, ctx, options);
+      };
+      jobs.push(exchange(soldA, b.variant.id));
+      jobs.push(exchange(soldB, a.variant.id));
+      jobs.push(
+        withTotal(refundInputOf(soldB2.saleId, allLines(soldB2.lines)), ctx).then((input) =>
+          refundSale(input, ctx),
+        ),
+      );
+    }
+    const results = await Promise.allSettled(jobs);
+    const failed = results.filter((r) => r.status === "rejected");
+    expect(failed.map((r) => (r as PromiseRejectedResult).reason)).toEqual([]);
+    expect(await db.refund.count()).toBe(ROUNDS * 3);
     expect(await findLedgerMismatches(db)).toEqual([]);
   });
 });

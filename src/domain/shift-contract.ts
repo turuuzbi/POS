@@ -74,6 +74,8 @@ export const SHIFT_ERROR_CODES = [
   "SHIFT_ALREADY_OPEN",
   "DENOMINATIONS_INVALID",
   "VARIANCE_NOTE_REQUIRED",
+  /** Blind closers get a few tries; after that a manager (reports.view) must close. */
+  "CLOSE_ATTEMPTS_EXCEEDED",
   "NOTE_TOO_LONG",
   "AMOUNT_NOT_POSITIVE",
   "AMOUNT_TOO_LARGE",
@@ -138,7 +140,8 @@ export interface CashMovementResult {
   movementId: string;
   type: (typeof CASH_MOVEMENT_TYPES)[number];
   amount: bigint;
-  expectedCashAfter: bigint;
+  /** null for callers without `reports.view` (blind close: the drawer total stays hidden). */
+  expectedCashAfter: bigint | null;
   replayed: boolean;
 }
 
@@ -146,7 +149,7 @@ export const cashMovementResultSchema = z.object({
   movementId: uuidV7,
   type: z.enum(CASH_MOVEMENT_TYPES),
   amount: signedMoneyWire,
-  expectedCashAfter: signedMoneyWire,
+  expectedCashAfter: signedMoneyWire.nullable(),
   replayed: z.boolean(),
 });
 

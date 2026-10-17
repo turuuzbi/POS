@@ -42,6 +42,12 @@ export interface PostStockInput {
   updateAverageCost?: boolean;
   /** Refuse to take any balance below zero (INSUFFICIENT_STOCK). */
   forbidNegative?: boolean;
+  /**
+   * Further tracked variants of this location the caller will post in the same
+   * transaction right after: their levels are locked in the same sorted pass,
+   * so two multi-step callers cannot take the same levels in opposite order.
+   */
+  alsoLock?: readonly string[];
 }
 
 export interface PostedLine {
@@ -61,6 +67,7 @@ export interface PostedLine {
 export async function postStockMovements(tx: Tx, input: PostStockInput): Promise<PostedLine[]> {
   if (input.lines.length === 0) return [];
   const variantIds = [...new Set(input.lines.map((line) => line.variantId))].sort();
+  const lockIds = [...new Set([...variantIds, ...(input.alsoLock ?? [])])].sort();
 
   const variants = await tx.productVariant.findMany({
     where: { id: { in: variantIds } },
@@ -101,12 +108,12 @@ export async function postStockMovements(tx: Tx, input: PostStockInput): Promise
   }
   await tx.$executeRaw`
     INSERT INTO "StockLevel" ("variantId", "locationId", "onHandMilli", "updatedAt")
-    SELECT v, ${input.locationId}::uuid, 0, now() FROM unnest(${variantIds}::uuid[]) AS v
+    SELECT v, ${input.locationId}::uuid, 0, now() FROM unnest(${lockIds}::uuid[]) AS v
     ORDER BY v
     ON CONFLICT ("variantId", "locationId") DO NOTHING`;
   const locked = await tx.$queryRaw<{ variantId: string; onHandMilli: number }[]>`
     SELECT "variantId", "onHandMilli" FROM "StockLevel"
-    WHERE "locationId" = ${input.locationId}::uuid AND "variantId" = ANY(${variantIds}::uuid[])
+    WHERE "locationId" = ${input.locationId}::uuid AND "variantId" = ANY(${lockIds}::uuid[])
     ORDER BY "variantId" FOR UPDATE`;
   const balance = new Map(locked.map((row) => [row.variantId, Number(row.onHandMilli)]));
 

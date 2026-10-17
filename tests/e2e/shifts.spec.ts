@@ -169,6 +169,15 @@ test.describe("shift life cycle", () => {
     await expect(xDialog.getByTestId("tender-CASH")).toHaveText(mnt(380_000));
     await expect(xDialog.getByText(mn.shifts.report.expectedHidden)).toBeVisible();
     await expect(xDialog.getByTestId("expected-cash")).toHaveCount(0);
+    // Server-side blind close: none of the components of the expected cash is on the page either.
+    for (const label of [
+      mn.shifts.report.openingFloat,
+      mn.shifts.report.cashSales,
+      mn.shifts.report.cashIn,
+      mn.shifts.report.cashOut,
+    ]) {
+      await expect(xDialog.getByText(label, { exact: true })).toHaveCount(0);
+    }
     await xDialog.getByTestId("report-print").click();
     expect(await printCalls(page)).toBe(1);
     // Print media: only the report remains.

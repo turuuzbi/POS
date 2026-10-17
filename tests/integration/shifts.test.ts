@@ -11,7 +11,12 @@ import { shiftCodeFromFailure } from "@/domain/shift-failure";
 import { signApproval } from "@/server/auth/approval";
 import { checkoutSale, type CheckoutFailure } from "@/server/services/checkout";
 import { loadExpectedCash, loadShiftReportInput } from "@/server/services/shift-report";
-import { closeShift, recordCashMovement, ShiftFailure } from "@/server/services/shifts";
+import {
+  closeShift,
+  MAX_FAILED_CLOSE_ATTEMPTS,
+  recordCashMovement,
+  ShiftFailure,
+} from "@/server/services/shifts";
 import { getShiftDetail, listShifts } from "@/server/queries/shifts";
 import { db, resetDatabase } from "../support/db";
 import {
@@ -311,6 +316,132 @@ describe("closeShift", () => {
   });
 });
 
+describe("blind close and the close clock", () => {
+  beforeEach(resetDatabase);
+  afterAll(() => db.$disconnect());
+
+  it("refuses a cashier after 5 failed closes; a manager can still close", async () => {
+    const till = await createTill();
+    const { user, device } = till.ctx();
+    for (let i = 0; i < MAX_FAILED_CLOSE_ATTEMPTS; i++) {
+      expect(
+        await failure(closeShift(closeInput(till.shift!.id, { "20000": 1 }), user, device, meta)),
+      ).toBe("VARIANCE_NOTE_REQUIRED");
+    }
+    // Even a count that would pass is refused now: the cashier has had their tries.
+    expect(
+      await failure(
+        closeShift(closeInput(till.shift!.id, { "20000": 1 }, "n"), user, device, meta),
+      ),
+    ).toBe("CLOSE_ATTEMPTS_EXCEEDED");
+    expect(await db.shift.count({ where: { status: "OPEN" } })).toBe(1);
+    const manager = till.ctx(till.manager);
+    const closed = await closeShift(
+      closeInput(till.shift!.id, { "20000": 1 }, "manager count"),
+      manager.user,
+      manager.device,
+      meta,
+    );
+    expect(closed.classification).toBe("SHORT");
+  });
+
+  it("hides the expected cash and its components from a cashier's view of the open shift", async () => {
+    const till = await createTill();
+    const { variant } = await createStockedProduct(till, { price: 100_000n });
+    await cashSale(till, variant.id);
+    const manager = till.ctx(till.manager);
+    await recordCashMovement(
+      movementInput({ amount: "200000", reason: "float top-up" }),
+      manager.user,
+      manager.device,
+      meta,
+    );
+    const asCashier = {
+      id: till.cashier.id,
+      role: "CASHIER" as const,
+      locationIds: [till.location.id],
+    };
+    const blind = await getShiftDetail(
+      { user: asCashier, registerId: till.register.id },
+      till.shift!.id,
+    );
+    expect(blind).toMatchObject({ blind: true, movements: [] });
+    expect(blind!.report.cash).toEqual({
+      openingFloat: 0n,
+      cashSales: 0n,
+      cashRefunds: 0n,
+      cashIn: 0n,
+      cashOut: 0n,
+      changeGiven: 0n,
+      expected: 0n,
+    });
+    expect(blind!.shift).toMatchObject({
+      openingFloat: 0n,
+      expectedCash: null,
+      cashVariance: null,
+    });
+    // Sales and tenders stay.
+    expect(blind!.report.saleCount).toBe(1);
+    expect(blind!.report.tenders.find((t) => t.method === "CASH")?.net).toBe(100_000n);
+    const wire = JSON.stringify(reportToJson(blind as never));
+    expect(wire).not.toContain("5100000"); // float + sale
+    expect(wire).not.toContain("5300000"); // + the pay-in
+    expect(wire).not.toContain("5000000"); // the float
+
+    const open = await getShiftDetail({ user: manager.user }, till.shift!.id);
+    expect(open).toMatchObject({ blind: false });
+    expect(open!.report.cash.expected).toBe(5_300_000n);
+    // The cash-movement result carries the drawer total for managers only.
+    const cashierCtx = till.ctx();
+    const input = movementInput({ amount: "100000", reason: "change" });
+    const asApproved = movementInput({
+      movementId: input.movementId,
+      amount: "100000",
+      reason: "change",
+      approvals: { [shiftApprovalKeys.movement]: token(till, input, "movement") },
+    });
+    const result = await recordCashMovement(asApproved, cashierCtx.user, cashierCtx.device, meta);
+    expect(result.expectedCashAfter).toBeNull();
+    const replay = await recordCashMovement(asApproved, cashierCtx.user, cashierCtx.device, meta);
+    expect(replay.expectedCashAfter).toBeNull();
+    const byManager = await recordCashMovement(movementInput(), manager.user, manager.device, meta);
+    expect(byManager.expectedCashAfter).toBe(5_500_000n);
+    // After the close the Z report is open to the cashier again.
+    await closeShift(closeInput(till.shift!.id, {}, "closed"), manager.user, manager.device, meta);
+    const z = await getShiftDetail(
+      { user: asCashier, registerId: till.register.id },
+      till.shift!.id,
+    );
+    expect(z).toMatchObject({ blind: false });
+    expect(z!.report.cash.expected).toBe(5_500_000n);
+  });
+
+  it("stamps closedAt after the shift row lock, never before a sale it includes", async () => {
+    const till = await createTill();
+    const { user, device } = till.ctx();
+    const id = till.shift!.id;
+    let release = 0;
+    const holder = db.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "Shift" WHERE "id" = ${id}::uuid FOR SHARE`;
+        await new Promise((r) => setTimeout(r, 500));
+        release = Date.now();
+      },
+      { timeout: 10_000 },
+    );
+    await new Promise((r) => setTimeout(r, 150));
+    const closing = closeShift(closeInput(id, { "20000": 1 }, "note"), user, device, meta);
+    await holder;
+    await closing;
+    const shift = await db.shift.findUniqueOrThrow({ where: { id } });
+    expect(shift.closedAt!.getTime()).toBeGreaterThanOrEqual(release);
+    const z = await db.zReport.findFirstOrThrow({ where: { shiftId: id } });
+    expect((z.data as { closing: { closedAt: string } }).closing.closedAt).toBe(
+      shift.closedAt!.toISOString(),
+    );
+  });
+});
+
 describe("recordCashMovement", () => {
   beforeEach(resetDatabase);
   afterAll(() => db.$disconnect());
@@ -407,7 +538,8 @@ describe("recordCashMovement", () => {
       },
     });
     const result = await recordCashMovement(both, cashier.user, cashier.device, meta);
-    expect(result.expectedCashAfter).toBe(-1_000_000n);
+    expect(result.expectedCashAfter).toBeNull(); // a cashier never sees the drawer total
+    expect(await loadExpectedCash(db, till.shift!.id)).toMatchObject({ expected: -1_000_000n });
 
     // A manager approves their own overdraw (permission held), but only for a real overdraw.
     const manager = till.ctx(till.manager);

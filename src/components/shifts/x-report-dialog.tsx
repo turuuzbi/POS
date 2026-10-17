@@ -44,7 +44,7 @@ export function useShiftReport(shiftId: string, active: boolean) {
   return { detail, loading, error, reload: load };
 }
 
-/** Print-friendly X report of the open shift. The expected cash stays hidden for a blind close. */
+/** Print-friendly X report of the open shift. For a blind close the server leaves out the cash figures. */
 export function XReportDialog(props: XReportDialogProps) {
   return props.open ? <XReportBody {...props} /> : null;
 }
@@ -53,19 +53,16 @@ interface XReportDialogProps {
   open: boolean;
   onClose: () => void;
   shiftId: string;
-  hideExpected: boolean;
 }
 
 function XReportBody({
   open,
   onClose,
   shiftId,
-  hideExpected,
 }: {
   open: boolean;
   onClose: () => void;
   shiftId: string;
-  hideExpected: boolean;
 }) {
   const t = useTranslations("shifts");
   const { detail, loading, error, reload } = useShiftReport(shiftId, open);
@@ -93,8 +90,8 @@ function XReportBody({
               closedByName: detail.shift.closedByName,
               zNumber: detail.shift.zReportNumber,
             }}
-            movements={detail.movements}
-            hideExpected={hideExpected}
+            movements={detail.blind ? undefined : detail.movements}
+            hideCash={detail.blind}
             onRefresh={reload}
             refreshing={loading}
           />

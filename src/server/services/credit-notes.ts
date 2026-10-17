@@ -3,6 +3,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import {
   buildRefundReceiptModel,
   buildVoidReceiptModel,
+  type CreditAudience,
   type RefundReceiptModel,
   type VoidReceiptModel,
 } from "@/domain/receipt-credit";
@@ -159,45 +160,48 @@ export interface VoidReceipt {
   shareToken: string;
 }
 
-async function loadRefund(refundId: string) {
+async function loadRefund(refundId: string, audience: CreditAudience) {
   const row = await db.refund.findUnique({ where: { id: refundId }, select: refundSelect });
   if (!row) return null;
-  const model = buildRefundReceiptModel({
-    business: await businessSource(),
-    location: locationSource(row.location),
-    refund: {
-      number: row.number,
-      occurredAt: row.occurredAt,
-      processedByName: row.processedBy.name,
-      approvedByName: row.approvedBy?.name,
-      reason: row.reason,
-      netAmount: row.netAmount,
-      vatAmount: row.vatAmount,
-      cityTaxAmount: row.cityTaxAmount,
-      tipAmount: row.tipAmount,
-      roundingAmount: row.roundingAmount,
-      totalAmount: row.totalAmount,
+  const model = buildRefundReceiptModel(
+    {
+      business: await businessSource(),
+      location: locationSource(row.location),
+      refund: {
+        number: row.number,
+        occurredAt: row.occurredAt,
+        processedByName: row.processedBy.name,
+        approvedByName: row.approvedBy?.name,
+        reason: row.reason,
+        netAmount: row.netAmount,
+        vatAmount: row.vatAmount,
+        cityTaxAmount: row.cityTaxAmount,
+        tipAmount: row.tipAmount,
+        roundingAmount: row.roundingAmount,
+        totalAmount: row.totalAmount,
+      },
+      originalSale: { number: row.sale.number },
+      exchangeSale: row.exchangeSale,
+      lines: row.lines.map((l) => ({
+        ...l.saleLine,
+        qtyMilli: l.qtyMilli,
+        restock: l.restock,
+        netAmount: l.netAmount,
+        vatAmount: l.vatAmount,
+        cityTaxAmount: l.cityTaxAmount,
+        totalAmount: l.totalAmount,
+      })),
+      payments: row.payments.map((p) => ({
+        method: p.method,
+        amount: p.amount,
+        reference: p.reference,
+        cardBrand: p.originalPayment?.cardBrand,
+        cardLast4: p.originalPayment?.cardLast4,
+      })),
+      fiscal: row.fiscalReceipt,
     },
-    originalSale: { number: row.sale.number },
-    exchangeSale: row.exchangeSale,
-    lines: row.lines.map((l) => ({
-      ...l.saleLine,
-      qtyMilli: l.qtyMilli,
-      restock: l.restock,
-      netAmount: l.netAmount,
-      vatAmount: l.vatAmount,
-      cityTaxAmount: l.cityTaxAmount,
-      totalAmount: l.totalAmount,
-    })),
-    payments: row.payments.map((p) => ({
-      method: p.method,
-      amount: p.amount,
-      reference: p.reference,
-      cardBrand: p.originalPayment?.cardBrand,
-      cardLast4: p.originalPayment?.cardLast4,
-    })),
-    fiscal: row.fiscalReceipt,
-  });
+    audience,
+  );
   return { model, locationId: row.locationId, id: row.id };
 }
 
@@ -207,7 +211,7 @@ export async function getRefundReceiptForStaff(
   canAccessLocation: LocationGuard,
 ): Promise<RefundReceipt | null> {
   if (!isSaleId(refundId)) return null;
-  const loaded = await loadRefund(refundId);
+  const loaded = await loadRefund(refundId, "staff");
   if (!loaded || !canAccessLocation(loaded.locationId)) return null;
   const shareToken = creditNoteToken("refund", loaded.id);
   return shareToken ? { model: loaded.model, shareToken } : null;
@@ -217,35 +221,38 @@ export async function getRefundReceiptForStaff(
 export async function getRefundReceiptByToken(token: string): Promise<RefundReceipt | null> {
   const id = verifyCreditNoteToken("refund", token);
   if (!id) return null;
-  const loaded = await loadRefund(id);
+  const loaded = await loadRefund(id, "public");
   return loaded ? { model: loaded.model, shareToken: token } : null;
 }
 
-async function loadVoid(saleId: string) {
+async function loadVoid(saleId: string, audience: CreditAudience) {
   const row = await db.sale.findUnique({ where: { id: saleId }, select: voidSelect });
   if (!row?.void) return null;
-  const model = buildVoidReceiptModel({
-    business: await businessSource(),
-    location: locationSource(row.location),
-    sale: {
-      number: row.number,
-      occurredAt: row.occurredAt,
-      cashierName: row.cashier.name,
-      totalAmount: row.totalAmount,
-      netAmount: row.netAmount,
-      vatAmount: row.vatAmount,
-      cityTaxAmount: row.cityTaxAmount,
+  const model = buildVoidReceiptModel(
+    {
+      business: await businessSource(),
+      location: locationSource(row.location),
+      sale: {
+        number: row.number,
+        occurredAt: row.occurredAt,
+        cashierName: row.cashier.name,
+        totalAmount: row.totalAmount,
+        netAmount: row.netAmount,
+        vatAmount: row.vatAmount,
+        cityTaxAmount: row.cityTaxAmount,
+      },
+      void: {
+        occurredAt: row.void.createdAt,
+        reason: row.void.reason,
+        voidedByName: row.void.voidedBy.name,
+        approvedByName: row.void.approvedBy?.name,
+      },
+      lines: row.lines,
+      payments: row.payments,
+      fiscal: row.fiscalReceipt,
     },
-    void: {
-      occurredAt: row.void.createdAt,
-      reason: row.void.reason,
-      voidedByName: row.void.voidedBy.name,
-      approvedByName: row.void.approvedBy?.name,
-    },
-    lines: row.lines,
-    payments: row.payments,
-    fiscal: row.fiscalReceipt,
-  });
+    audience,
+  );
   return { model, locationId: row.locationId, id: row.id };
 }
 
@@ -255,7 +262,7 @@ export async function getVoidReceiptForStaff(
   canAccessLocation: LocationGuard,
 ): Promise<VoidReceipt | null> {
   if (!isSaleId(saleId)) return null;
-  const loaded = await loadVoid(saleId);
+  const loaded = await loadVoid(saleId, "staff");
   if (!loaded || !canAccessLocation(loaded.locationId)) return null;
   const shareToken = creditNoteToken("void", loaded.id);
   return shareToken ? { model: loaded.model, shareToken } : null;
@@ -264,7 +271,7 @@ export async function getVoidReceiptForStaff(
 export async function getVoidReceiptByToken(token: string): Promise<VoidReceipt | null> {
   const id = verifyCreditNoteToken("void", token);
   if (!id) return null;
-  const loaded = await loadVoid(id);
+  const loaded = await loadVoid(id, "public");
   return loaded ? { model: loaded.model, shareToken: token } : null;
 }
 

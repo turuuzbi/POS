@@ -41,6 +41,8 @@ export const exchangeContextSchema = z.object({
   reason: z.enum(RETURN_REASONS),
   note: z.string().max(500),
   payout: payoutSchema,
+  /** The exchange was booked (the done screen is up): never restored after a reload. */
+  committed: z.boolean().optional(),
 });
 export type StoredExchange = z.output<typeof exchangeContextSchema>;
 
@@ -49,6 +51,8 @@ export interface ExchangeContext {
   saleId: string;
   saleNumber: string;
   draft: Draft & { reason: NonNullable<Draft["reason"]> };
+  /** Set once the server booked the exchange; a persisted committed context is dropped on load. */
+  committed?: boolean;
 }
 
 export function toStored(context: ExchangeContext): StoredExchange {
@@ -71,6 +75,7 @@ export function toStored(context: ExchangeContext): StoredExchange {
     reason: context.draft.reason,
     note: context.draft.note,
     payout,
+    ...(context.committed ? { committed: true } : {}),
   };
 }
 
@@ -91,6 +96,7 @@ export function fromStored(stored: StoredExchange): ExchangeContext {
     saleId: stored.saleId,
     saleNumber: stored.saleNumber,
     draft: { choices, reason: stored.reason, note: stored.note, payout },
+    ...(stored.committed ? { committed: true } : {}),
   };
 }
 
@@ -108,7 +114,14 @@ export function loadExchange(store: KeyValueStore | null, scope: string): Exchan
     const raw = store.getItem(exchangeKey(scope));
     if (!raw) return null;
     const parsed = exchangeContextSchema.safeParse(JSON.parse(raw));
-    return parsed.success ? fromStored(parsed.data) : null;
+    if (!parsed.success) return null;
+    if (parsed.data.committed) {
+      // Finished on the done screen, the page reloaded before it was dismissed: its refund id
+      // is spent, restoring it would only produce an IDEMPOTENCY_CONFLICT later.
+      store.removeItem(exchangeKey(scope));
+      return null;
+    }
+    return fromStored(parsed.data);
   } catch {
     return null;
   }
